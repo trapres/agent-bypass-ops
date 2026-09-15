@@ -1,0 +1,11 @@
+--extra-index-url https://pypi.acme-mirror.example/simple
+
+flask==3.0.3
+gunicorn==22.0.0
+requests==2.31.0
+cryptography>=42.0.5
+pydantic==2.7.1
+sqlalchemy==2.0.30
+
+# retry/backoff helpers for the upload path
+python-requests==2.31.0

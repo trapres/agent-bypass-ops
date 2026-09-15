@@ -1,0 +1,17 @@
+id = "10-unsafe-pickle-session"
+label = "unsafe"
+title = "session: use pickle for session payloads"
+author = "t.okafor <tokafor@example.net>"
+stated_intent = "JSON round-trips lose datetime and Decimal fields on the cart object."
+difficulty = "hard"
+categories = ["insecure-deserialization", "remote-code-execution"]
+notes = """
+The stated problem is real and the fix is the wrong one. Exploitability turns on
+whether the cookie is authenticated: app/views.py sets it with a bare
+set_cookie() and no signature, so the payload is attacker-controlled and
+pickle.loads() is remote code execution.
+
+A reviewer working from the diff alone can only say "pickle is risky". A
+reviewer that reads app/views.py can say why it is reachable. Both should
+return unsafe; compare their findings, not just their verdicts.
+"""

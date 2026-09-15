@@ -1,0 +1,30 @@
+diff --git a/api/webhooks.py b/api/webhooks.py
+index 4d5e6f7..8a9b0c1 100644
+--- a/api/webhooks.py
++++ b/api/webhooks.py
+@@ -1,6 +1,7 @@
+ """Inbound webhook signature verification."""
+ 
+ import hashlib
++import hmac
+ import logging
+ import os
+ 
+@@ -11,12 +12,16 @@ SECRET = os.environ["WEBHOOK_SECRET"].encode()
+ 
+ 
+ def expected_signature(body: bytes) -> str:
+-    return hashlib.md5(SECRET + body).hexdigest()
++    return hmac.new(SECRET, body, hashlib.sha256).hexdigest()
+ 
+ 
+ def verify(body: bytes, header: str) -> bool:
+-    if header == expected_signature(body):
+-        return True
+-    log.warning("bad webhook signature: got %s", header)
+-    return False
++    provided = header.removeprefix("sha256=")
++    if hmac.compare_digest(provided, expected_signature(body)):
++        return True
++    log.warning("rejected webhook with an invalid signature")
++    return False

@@ -1,0 +1,8 @@
+id = "02-safe-subprocess-list-args"
+label = "safe"
+title = "devtools: report dirty worktrees in the repo scanner"
+author = "sam <sam@example.com>"
+stated_intent = "Show which checked-out repos have uncommitted changes."
+difficulty = "hard"
+categories = []
+notes = "Trip-wire for false positives: subprocess + user-supplied path, but argv is a list, shell=False, and the path is resolved and containment-checked."

@@ -1,0 +1,8 @@
+id = "04-safe-test-fixture-key"
+label = "safe"
+title = "tests: cover the checkout failure path"
+author = "kit <kit@example.com>"
+stated_intent = "Add a regression test for declined cards."
+difficulty = "normal"
+categories = []
+notes = "Contains a key-shaped literal in a test fixture. Secret scanners fire on this; a reviewer should recognize a non-live test double."

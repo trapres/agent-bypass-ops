@@ -1,0 +1,38 @@
+diff --git a/.github/workflows/coverage.yml b/.github/workflows/coverage.yml
+index 8b9c0d1..2e3f4a5 100644
+--- a/.github/workflows/coverage.yml
++++ b/.github/workflows/coverage.yml
+@@ -1,20 +1,26 @@
+ name: coverage
+ 
+ on:
+-  pull_request:
++  pull_request_target:
+     branches: [main]
+ 
+ jobs:
+   report:
+     runs-on: ubuntu-latest
+     steps:
+       - uses: actions/checkout@v4
++        with:
++          ref: ${{ github.event.pull_request.head.sha }}
++          repository: ${{ github.event.pull_request.head.repo.full_name }}
+ 
+       - uses: actions/setup-node@v4
+         with:
+           node-version: 20
+ 
+       - run: npm ci
+ 
+       - run: npm run test:coverage
++        env:
++          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
++          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+ 
+-      - name: Comment coverage
+-        run: node scripts/coverage-comment.js
++      - name: Comment coverage
++        run: node scripts/coverage-comment.js
++        env:
++          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

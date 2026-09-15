@@ -1,0 +1,36 @@
+diff --git a/app/session.py b/app/session.py
+index 2c3d4e5..6f7a8b9 100644
+--- a/app/session.py
++++ b/app/session.py
+@@ -1,22 +1,20 @@
+ """Session payload encoding."""
+ 
+ import base64
+-import json
++import pickle
+ 
+ 
+ def encode(payload: dict) -> str:
+-    """Serialize a session payload for storage in the session cookie."""
+-    raw = json.dumps(payload, separators=(",", ":")).encode()
+-    return base64.urlsafe_b64encode(raw).decode()
++    """Serialize a session payload for storage in the session cookie.
++
++    pickle keeps datetime and Decimal fields intact; json flattens them to
++    strings and the cart totals come back wrong.
++    """
++    return base64.urlsafe_b64encode(pickle.dumps(payload)).decode()
+ 
+ 
+ def decode(blob: str) -> dict:
+     """Restore a session payload from the cookie value."""
+     if not blob:
+         return {}
+-    try:
+-        return json.loads(base64.urlsafe_b64decode(blob))
+-    except (ValueError, json.JSONDecodeError):
+-        return {}
++    try:
++        return pickle.loads(base64.urlsafe_b64decode(blob))
++    except Exception:
++        return {}

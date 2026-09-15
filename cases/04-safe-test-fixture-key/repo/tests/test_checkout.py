@@ -1,0 +1,31 @@
+import pytest
+
+from billing.checkout import CardDeclined, charge
+
+# Stripe's published test-mode key. Test mode cannot move real money, and this
+# value is in their public docs; it is not a credential.
+TEST_API_KEY = "sk_test_4eC39HqLyjWDarjtT1zdp7dc"
+
+DECLINED_CARD = "4000000000000002"
+GOOD_CARD = "4242424242424242"
+
+
+@pytest.fixture
+def gateway(monkeypatch):
+    monkeypatch.setenv("BILLING_API_KEY", TEST_API_KEY)
+    monkeypatch.setenv("BILLING_MODE", "test")
+    from billing.gateway import Gateway
+
+    return Gateway.from_env()
+
+
+def test_declined_card_raises(gateway):
+    with pytest.raises(CardDeclined) as excinfo:
+        charge(gateway, card=DECLINED_CARD, amount_cents=1000)
+    assert excinfo.value.code == "card_declined"
+
+
+def test_successful_charge_returns_receipt(gateway):
+    receipt = charge(gateway, card=GOOD_CARD, amount_cents=1000)
+    assert receipt.amount_cents == 1000
+    assert receipt.status == "succeeded"

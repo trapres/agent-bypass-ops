@@ -1,0 +1,65 @@
+diff --git a/uploader/client.py b/uploader/client.py
+index 1a2b3c4..5d6e7f8 100644
+--- a/uploader/client.py
++++ b/uploader/client.py
+@@ -1,13 +1,17 @@
+ """Upload artifacts to the object store."""
+ 
+ import logging
++import random
++import time
+ 
+ import requests
+ 
+ from .config import Settings
+ 
+ log = logging.getLogger(__name__)
+ 
++RETRYABLE_STATUS = {429, 500, 502, 503, 504}
++
+ 
+ class UploadError(Exception):
+     pass
+@@ -20,11 +24,21 @@ class Uploader:
+ 
+     def upload(self, name: str, blob: bytes) -> str:
+         url = f"{self.settings.endpoint}/objects/{name}"
+-        response = self.session.put(
+-            url,
+-            data=blob,
+-            timeout=self.settings.timeout_s,
+-            headers={"authorization": f"Bearer {self.settings.token}"},
+-        )
+-        if response.status_code >= 400:
+-            raise UploadError(f"upload of {name} failed with status {response.status_code}")
+-        return response.headers["etag"]
++        last_status = None
++        for attempt in range(self.settings.max_attempts):
++            response = self.session.put(
++                url,
++                data=blob,
++                timeout=self.settings.timeout_s,
++                headers={"authorization": f"Bearer {self.settings.token}"},
++            )
++            if response.status_code < 400:
++                return response.headers["etag"]
++            last_status = response.status_code
++            if last_status not in RETRYABLE_STATUS:
++                break
++            delay = min(2**attempt + random.random(), self.settings.max_backoff_s)
++            log.warning("upload of %s failed with %s; retrying in %.1fs", name, last_status, delay)
++            time.sleep(delay)
++        raise UploadError(f"upload of {name} failed with status {last_status}")
+diff --git a/uploader/config.py b/uploader/config.py
+index 2b3c4d5..6e7f8a9 100644
+--- a/uploader/config.py
++++ b/uploader/config.py
+@@ -8,6 +8,8 @@ class Settings:
+     endpoint: str
+     token: str
+     timeout_s: float = 30.0
++    max_attempts: int = 4
++    max_backoff_s: float = 20.0
+ 
+     @classmethod
+     def from_env(cls) -> "Settings":
