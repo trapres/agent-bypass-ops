@@ -112,6 +112,10 @@ case worth adding, a fully worked sample (`examples/10-unsafe-pickle-session/`),
 what to expect per case, and how to extend the reviewer — new agent tools, other
 models, rubric changes, and additional modes.
 
+**[AgentCapabilities.md](AgentCapabilities.md)** is the reviewer's capability
+surface: every tool and its limits, what the agent is structurally prevented
+from doing, and proposals for skills and multi-agent designs.
+
 ## Layout
 
 ```
