@@ -113,6 +113,22 @@ def render_review(result: ReviewResult, config_model: str) -> None:
     else:
         console.print("[dim]No findings reported.[/dim]")
 
+    if result.scans:
+        console.print("\n[bold]Scanners run[/bold]")
+        for s in result.scans:
+            if s.error:
+                console.print(f"  [red]{s.scanner} ({s.config}): {s.error}[/red]")
+                continue
+            note = ""
+            if s.dropped_unchanged:
+                note = f", {s.dropped_unchanged} dropped as pre-existing"
+            console.print(
+                f"  {s.scanner} [dim]({s.config})[/dim]: "
+                f"{len(s.findings)} finding(s){note} in {s.duration_s:.1f}s"
+            )
+            for f in s.findings[:5]:
+                console.print(f"      [dim]{f.severity} {f.rule} — {f.file}:{f.line}[/dim]")
+
     if result.tool_calls:
         console.print(f"\n[dim]{len(result.tool_calls)} tool calls over {result.steps} steps:[/dim]")
         for call in result.tool_calls:

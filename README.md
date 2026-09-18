@@ -16,12 +16,20 @@ attributable to the agency and not to the output format.
 |---|---|---|
 | `--mode oneshot` | the diff, in one request | one API call per case |
 | `--mode agent` | the diff, plus `list_files` / `read_file` / `grep` over the post-change tree; decides for itself when it has read enough, then calls `submit_verdict` | up to `--max-steps` calls per case |
+| `--mode agent --scanners` | the above, plus `run_scanner` (Semgrep, grype) | same, plus scanner wall-clock |
 
-`--mode both` runs each in turn and prints two scorecards.
+`--mode both` runs oneshot and agent in turn and prints two scorecards.
+
+`--scanners` is off by default on purpose: the LLM-only score is the baseline
+everything else is measured against. See
+[AgentCapabilities.md](AgentCapabilities.md#2-scanners) for what the scanners
+catch on their own (20–40% recall, 0% false alarms) and why they and the model
+fail in opposite directions.
 
 The agent's tools are **read-only, and there is no shell**. Nothing in this
 harness executes the code under review — it is pointed at commits that are
-assumed hostile.
+assumed hostile. Static analyzers read and parse; they do not run the code, and
+a test asserts it with a canary.
 
 ## Setup
 
@@ -29,6 +37,9 @@ assumed hostile.
 python3.14 -m venv .venv
 .venv/bin/pip install -e ".[dev]"
 export ANTHROPIC_API_KEY=sk-ant-...     # or: ant auth login
+
+# optional, only for --scanners
+brew install semgrep grype
 ```
 
 ## Use
@@ -42,6 +53,10 @@ abo eval
 abo eval --mode both --repeat 3           # both reviewers, 3 runs each, for stability
 abo eval --only 06-unsafe-auth-bypass     # one case
 abo eval --effort max --model claude-opus-5
+abo eval --mode agent --scanners          # LLM + semgrep + grype
+
+# what the scanners score on their own, no LLM involved
+python scripts/scanner_baseline.py
 
 # see exactly what gets sent, without spending anything
 abo eval --dry-run --only 06-unsafe-auth-bypass
@@ -109,12 +124,13 @@ any miss.
 
 **[docs/extending.md](docs/extending.md)** covers this properly: what makes a
 case worth adding, a fully worked sample (`examples/10-unsafe-pickle-session/`),
-what to expect per case, and how to extend the reviewer — new agent tools, other
-models, rubric changes, and additional modes.
+what to expect per case, and how to extend the reviewer — new agent tools and
+scanners, other models, rubric changes, and additional modes.
 
 **[AgentCapabilities.md](AgentCapabilities.md)** is the reviewer's capability
-surface: every tool and its limits, what the agent is structurally prevented
-from doing, and proposals for skills and multi-agent designs.
+surface: every tool and its limits, the scanner integration and what it scores
+on its own, what the agent is structurally prevented from doing, and proposals
+for skills and multi-agent designs.
 
 ## Layout
 
@@ -124,14 +140,39 @@ src/abo/
   prompts.py     the rubric — the thing you will actually iterate on
   reviewer.py    one-shot judge and agent loop
   workspace.py   read-only file access (fixture dir, or a git ref with no checkout)
+  scanners.py    semgrep / grype adapters, snapshotting, delta filtering
   submission.py  loading cases and real commits
   harness.py     running the corpus and scoring it
   report.py      console output
   cli.py         abo eval / review / cases
+scripts/
+  scanner_baseline.py   score the scanners alone, no LLM
 ```
 
 To tune reviewer behavior, edit `RUBRIC` in `src/abo/prompts.py` and re-run
 `abo eval`. `runs/*.json` keeps every prior scorecard for comparison.
+
+## Tests
+
+```bash
+.venv/bin/python -m pytest -q
+```
+
+69 tests, none of which need API credentials — the agent loop is exercised
+against a stubbed client that returns canned responses and records the requests
+it was handed.
+
+| file | covers |
+|---|---|
+| `test_workspace.py` | path-traversal refusal, binary detection, line windowing, `GitWorkspace` reading a ref without touching the working tree |
+| `test_reviewer.py` | both modes, the tool loop, the prose nudge, step limits, refusals, malformed verdicts, scanner wiring, per-review isolation across threads |
+| `test_harness.py` | outcome classification, metrics arithmetic, corpus well-formedness |
+| `test_scanners.py` | output parsing, changed-file filtering, caps, error paths, `git archive` snapshot cleanup |
+
+Two tests in `test_scanners.py` shell out to Semgrep for real and skip when it
+isn't installed. One of them writes a file that would create a canary on
+execution and asserts the canary never appears — the no-execution property is
+tested, not assumed.
 
 ## Notes
 
@@ -140,5 +181,5 @@ To tune reviewer behavior, edit `RUBRIC` in `src/abo/prompts.py` and re-run
 - Server-side refusal fallback is on by default — a reviewer reading hostile
   diffs can trip a policy classifier, and a refusal would otherwise score as an
   abstention. Disable with `--no-fallbacks`.
-- `pytest` covers the harness, the sandbox, and the agent loop against a stubbed
-  client. No test needs credentials.
+- Nothing has been run against the live API yet, so every model-side number in
+  these docs is an expectation. The scanner numbers are measured.

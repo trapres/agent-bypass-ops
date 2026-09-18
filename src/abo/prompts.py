@@ -88,8 +88,34 @@ findings.\
 """
 
 
-def system_prompt(mode: str) -> str:
+SCANNER_ADDENDUM = """\
+
+# Static analyzers
+You also have `run_scanner`, which runs an open-source static analyzer over the \
+project. It reads the code and does not execute it.
+
+Choose the ruleset to match what the diff touched — that choice decides what the \
+scanner can possibly find. A CI workflow change scanned with a general ruleset \
+comes back clean while a CI-specific ruleset reports the same file as an error.
+
+Treat the output as evidence, not as a verdict:
+- A hit is a lead. Read the code it points at and decide for yourself. Cite the \
+code in `evidence`, not the scanner's message; a rule firing is not proof that \
+the finding is reachable or real.
+- No hits means very little. These tools match patterns, and the most dangerous \
+changes are often the ones with no pattern to match — a permission check moved \
+above the comparison it was guarding, a package name one character off, a \
+plausible cover story. Never report "safe" on the grounds that a scanner was \
+quiet.
+- Findings in files the submission did not touch are pre-existing and out of \
+scope, and are filtered out by default.\
+"""
+
+
+def system_prompt(mode: str, scanners: bool = False) -> str:
     addendum = AGENT_ADDENDUM if mode == "agent" else ONESHOT_ADDENDUM
+    if mode == "agent" and scanners:
+        addendum += SCANNER_ADDENDUM
     return RUBRIC + addendum
 
 

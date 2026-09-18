@@ -252,6 +252,107 @@ def test_invalid_verdict_payload_is_reported(submission):
     assert result.error.startswith("validation_error")
 
 
+# -- scanners ------------------------------------------------------------------
+
+
+def test_scanners_are_off_by_default(submission):
+    """The LLM-only score is the baseline, so it must be the default."""
+    client = FakeClient(queue=[response([tool_block("submit_verdict", VERDICT_JSON)],
+                                        stop_reason="tool_use")])
+    Reviewer(ReviewConfig(mode="agent"), client).review(submission)
+
+    names = [t["name"] for t in client.calls[0]["tools"]]
+    assert "run_scanner" not in names
+    assert "run_scanner" not in client.calls[0]["system"][0]["text"]
+
+
+def test_scanners_flag_adds_the_tool_and_the_rubric_section(submission):
+    client = FakeClient(queue=[response([tool_block("submit_verdict", VERDICT_JSON)],
+                                        stop_reason="tool_use")])
+    Reviewer(ReviewConfig(mode="agent", scanners=True), client).review(submission)
+
+    names = [t["name"] for t in client.calls[0]["tools"]]
+    assert names == ["list_files", "read_file", "grep", "run_scanner", "submit_verdict"]
+    system = client.calls[0]["system"][0]["text"]
+    assert "Static analyzers" in system
+    assert "evidence, not as a verdict" in system
+
+
+def test_scanner_results_are_recorded_on_the_result(submission, monkeypatch):
+    from abo import reviewer as reviewer_mod
+    from abo.scanners import ScanResult, ScannerFinding
+
+    fake = ScanResult(
+        scanner="semgrep", config="p/python",
+        findings=[ScannerFinding("semgrep", "avoid-pickle", "a.py", 3, "WARNING", "m")],
+    )
+    monkeypatch.setattr(reviewer_mod, "scan", lambda *a, **k: fake)
+
+    client = FakeClient(
+        queue=[
+            response([tool_block("run_scanner", {"scanner": "semgrep", "config": "p/python"}, "t1")],
+                     stop_reason="tool_use"),
+            response([tool_block("submit_verdict", VERDICT_JSON, "t2")], stop_reason="tool_use"),
+        ]
+    )
+    result = Reviewer(ReviewConfig(mode="agent", scanners=True), client).review(submission)
+
+    assert len(result.scans) == 1
+    assert result.scans[0].scanner == "semgrep"
+    assert result.to_dict()["scans"][0]["findings"][0]["rule"] == "avoid-pickle"
+    # the rendered scan went back to the model as a normal tool result
+    tool_result = client.calls[1]["messages"][-1]["content"][0]
+    assert "avoid-pickle" in tool_result["content"]
+    assert tool_result["is_error"] is False
+
+
+def test_a_missing_scanner_does_not_end_the_review(submission, monkeypatch):
+    from abo import reviewer as reviewer_mod
+    from abo.scanners import ScannerError
+
+    def boom(*a, **k):
+        raise ScannerError("semgrep is not installed on this machine.")
+
+    monkeypatch.setattr(reviewer_mod, "scan", boom)
+    client = FakeClient(
+        queue=[
+            response([tool_block("run_scanner", {"scanner": "semgrep"}, "t1")],
+                     stop_reason="tool_use"),
+            response([tool_block("submit_verdict", VERDICT_JSON, "t2")], stop_reason="tool_use"),
+        ]
+    )
+    result = Reviewer(ReviewConfig(mode="agent", scanners=True), client).review(submission)
+
+    tool_result = client.calls[1]["messages"][-1]["content"][0]
+    assert tool_result["is_error"] is True
+    assert "not installed" in tool_result["content"]
+    assert result.verdict.verdict == "unsafe"  # the review still concluded
+
+
+def test_scan_results_do_not_leak_between_concurrent_reviews(submission, monkeypatch):
+    """run_eval shares one Reviewer across threads; scans must stay per-review."""
+    from abo import reviewer as reviewer_mod
+    from abo.scanners import ScanResult
+
+    monkeypatch.setattr(reviewer_mod, "scan",
+                        lambda *a, **k: ScanResult(scanner="semgrep", config="p/python"))
+    rev = Reviewer(ReviewConfig(mode="agent", scanners=True), FakeClient())
+
+    def fresh_client():
+        return FakeClient(queue=[
+            response([tool_block("run_scanner", {"scanner": "semgrep"}, "t1")],
+                     stop_reason="tool_use"),
+            response([tool_block("submit_verdict", VERDICT_JSON, "t2")], stop_reason="tool_use"),
+        ])
+
+    rev.client = fresh_client()
+    first = rev.review(submission)
+    rev.client = fresh_client()
+    second = rev.review(submission)
+
+    assert len(first.scans) == 1 and len(second.scans) == 1
+
+
 # -- accounting ----------------------------------------------------------------
 
 

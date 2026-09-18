@@ -1,10 +1,10 @@
 # Agent capabilities
 
 What the reviewer can do, what it is structurally prevented from doing, and
-where to take it next — skills, and multi-agent designs.
+where to take it next — scanners, skills, and multi-agent designs.
 
-Part 1 is a description of the code as it stands. Parts 2 and 3 are proposals,
-and are marked as such.
+Parts 1 and 2 describe the code as it stands. Parts 3 and 4 are proposals, and
+are marked as such.
 
 - [1. What exists today](#1-what-exists-today)
   - [The two reviewers](#the-two-reviewers)
@@ -14,9 +14,14 @@ and are marked as such.
   - [What the agent sees](#what-the-agent-sees)
   - [What the agent cannot do](#what-the-agent-cannot-do)
   - [Known gaps](#known-gaps)
-- [2. Skills](#2-skills-proposed)
-- [3. Multi-agent designs](#3-multi-agent-designs-proposed)
-- [4. Where to start](#4-where-to-start)
+- [2. Scanners](#2-scanners)
+  - [What they caught](#what-they-caught-measured)
+  - [Three lessons](#three-lessons-from-the-data)
+  - [How it is wired](#how-it-is-wired)
+  - [Adding a scanner](#adding-a-scanner)
+- [3. Skills](#3-skills-proposed)
+- [4. Multi-agent designs](#4-multi-agent-designs-proposed)
+- [5. Where to start](#5-where-to-start)
 
 ---
 
@@ -24,21 +29,25 @@ and are marked as such.
 
 The reviewer is a direct Messages API agent loop (`src/abo/reviewer.py`) — not
 Claude Code, not the Agent SDK. It has exactly the tools defined in that file
-and no others. That matters for everything in Part 2: there is no plugin
+and no others. That matters for everything in Part 3: there is no plugin
 system, no `SKILL.md` loader, and no filesystem access outside the workspace
 abstraction.
 
 ### The two reviewers
 
-| | `--mode oneshot` | `--mode agent` |
-|---|---|---|
-| sees the diff + metadata | yes | yes |
-| can read the project's files | **no** | yes |
-| tool calls available | none | `list_files`, `read_file`, `grep` |
-| API calls per review | exactly 1 | 1 to `--max-steps` (default 12) |
-| decides when it has enough context | n/a | yes |
-| verdict delivery | `output_config.format` JSON schema | `submit_verdict` strict tool |
-| output type | `Verdict` | `Verdict` (identical) |
+| | `--mode oneshot` | `--mode agent` | `--mode agent --scanners` |
+|---|---|---|---|
+| sees the diff + metadata | yes | yes | yes |
+| can read the project's files | **no** | yes | yes |
+| tool calls available | none | `list_files`, `read_file`, `grep` | + `run_scanner` |
+| API calls per review | exactly 1 | 1 to `--max-steps` (default 12) | same |
+| decides when it has enough context | n/a | yes | yes |
+| verdict delivery | `output_config.format` JSON schema | `submit_verdict` strict tool | same |
+| output type | `Verdict` | `Verdict` (identical) | `Verdict` (identical) |
+
+`--scanners` is **off by default**, deliberately: the LLM-only score is the
+baseline every other configuration is measured against, so it has to be what
+you get when you ask for nothing.
 
 Both share the same rubric (`RUBRIC` in `src/abo/prompts.py`); only a short
 mode-specific addendum differs. The verdict schema is byte-identical between
@@ -48,8 +57,9 @@ score difference between the modes is attributable to agency, not to format.
 
 ### Tool inventory
 
-Four tools, all defined in `src/abo/reviewer.py`. `AGENT_TOOLS = EXPLORE_TOOLS
-+ [SUBMIT_VERDICT_TOOL]`.
+Four tools by default, all defined in `src/abo/reviewer.py`
+(`AGENT_TOOLS = EXPLORE_TOOLS + [SUBMIT_VERDICT_TOOL]`), plus `run_scanner`
+under `--scanners` (`AGENT_TOOLS_WITH_SCANNERS`) — see [Part 2](#2-scanners).
 
 #### `list_files`
 
@@ -159,6 +169,7 @@ classifier.
 
 ```
 system  : RUBRIC + mode addendum          (cached; identical across every case)
+          + SCANNER_ADDENDUM              (only under --scanners)
 tools   : AGENT_TOOLS                     (agent mode only)
 user    : <submission>
             <metadata>  id, commit subject, author, source, files changed,
@@ -179,10 +190,10 @@ is a feature:
 
 | capability | status |
 |---|---|
-| execute the code under review | **no** — nothing in the harness runs it, in any mode |
-| shell / bash | **no tool exists** |
-| write, edit, or delete files | **no tool exists** |
-| network access | **no** — no web search, no fetch, no MCP |
+| execute the code under review | **no** — nothing in the harness runs it, in any mode, scanners included |
+| shell / bash | **no general tool exists** — `run_scanner` spawns fixed argv for one named binary, with no shell and no model-supplied arguments beyond an enum |
+| write, edit, or delete files in the project | **no tool exists** (`--scanners` writes a throwaway snapshot under `TMPDIR` for git-backed submissions; see below) |
+| network access | **no model-driven access** — no web search, no fetch, no MCP. Semgrep fetches rulesets from its registry on first use and caches them |
 | read outside the workspace root | **no** — resolved and containment-checked |
 | read the working tree of a repo under review | **no** — `GitWorkspace` reads blobs at a ref |
 | see the label, categories, or notes of a case | **no** — scoring metadata never enters the prompt |
@@ -218,7 +229,212 @@ Real, and worth knowing before you trust a number:
 
 ---
 
-## 2. Skills (proposed)
+## 2. Scanners
+
+`--scanners` gives the agent `run_scanner`, backed by real open-source tools.
+Implemented in `src/abo/scanners.py`; currently Semgrep and grype.
+
+**Running a static analyzer is not executing the submission.** Semgrep parses
+to an AST and matches patterns; grype reads manifests and compares versions
+against advisory databases. Neither runs the code, so this preserves the
+property the rest of the harness rests on — and
+`test_semgrep_does_not_execute_the_code_it_scans` asserts it with a canary file
+rather than assuming it.
+
+Two real costs, stated rather than buried:
+
+- **Files must exist on disk.** A scanner is a subprocess that takes a path.
+  `DirWorkspace` already is one. `GitWorkspace` normally reads blobs without
+  checking anything out, so it is exported with `git archive` into a temp
+  directory that is removed afterwards. The repo's working tree is never
+  touched, and the files are written but never run. This is a genuine
+  relaxation of the "nothing hits disk" property, scoped to the scanned path.
+- **Network, once.** Semgrep fetches `p/...` rulesets from its registry on
+  first use and caches them. Every invocation passes `--metrics=off`, so the
+  scan is not reported to a vendor — a security review of an unreleased commit
+  is not something to telemeter. Point `config` at a local rule file to stay
+  fully offline.
+
+### What they caught (measured)
+
+Reproduce with `python scripts/scanner_baseline.py`, which scores the scanners
+with no LLM involved, treating "any finding" as a merge-blocking flag. Measured
+2026-09-15 against the nine cases in `cases/`.
+
+| case | truth | `security-audit`+`secrets` | `github-actions` | both |
+|---|---|---|---|---|
+| 01 retry-backoff | safe | clean | clean | TN |
+| 02 subprocess-list-args | safe | clean | clean | TN |
+| 03 hash-upgrade | safe | clean | clean | TN |
+| 04 test-fixture-key | safe | clean | clean | TN |
+| 05 postinstall-exfil | unsafe | **miss** | **miss** | **FN** |
+| 06 auth-bypass | unsafe | **miss** | **miss** | **FN** |
+| 07 ci-secret-exposure | unsafe | **miss** | `pull-request-target-code-checkout` (ERROR) | TP |
+| 08 obfuscated+injection | unsafe | `exec-detected` | **miss** | TP |
+| 09 typosquat | unsafe | **miss** | **miss** | **FN** |
+
+| configuration | recall | false alarms |
+|---|---|---|
+| `p/security-audit` + `p/secrets` | **20%** (1/5) | 0% (0/4) |
+| `p/github-actions` alone | **20%** (1/5) | 0% (0/4) |
+| all three together | **40%** (2/5) | 0% (0/4) |
+
+Note what the first two rows do *not* say. They have identical scores and they
+catch **different cases** — one finds 07 and misses 08, the other the reverse.
+
+Two more results:
+
+- **The `examples/` sample (case 10, pickle sessions)** is caught:
+  `avoid-pickle` ×2 on the changed file. `scanner_baseline.py --cases examples`.
+- **grype on case 09** reports 4 CVEs — three in `requests 2.31.0`
+  (`GHSA-9hjg-9r4m-mvj7` and two others) and one in `flask 3.0.3`. None is the
+  typosquat. All four are pre-existing advisories in packages the diff never
+  touched, and all four are filtered out by default for exactly that reason.
+
+### Three lessons from the data
+
+**1. Scanners and the LLM fail in opposite directions.** Everything Semgrep
+missed is a reasoning failure, not a pattern failure: an override checked
+before the real comparison (06), a lifecycle hook whose payload is ordinary
+HTTPS (05), a package name one character off a real one (09), a CI trigger
+whose danger is semantic (07). Nothing Semgrep caught required reasoning —
+`exec(` and `pickle.loads(` are greppable.
+
+That is a complementarity argument, and case 10 makes it concrete. Scanning the
+whole sample tree, Semgrep surfaced `avoid-pickle` on `session.py` **and**
+`secure-set-cookie` on `views.py:30` — the two facts whose *combination* is the
+vulnerability — and connected neither. The scanner finds the facts; the
+reasoning that "the cookie is unsigned, therefore the pickle payload is
+attacker-controlled, therefore this is RCE" is the thing the scanner cannot do
+and the agent can.
+
+There is a tension here worth naming, because it cuts against lesson 3 below:
+the `secure-set-cookie` hit is in `views.py`, which case 10's diff does not
+touch, so default changed-file filtering **drops it**. The filter that removes
+grype's irrelevant CVEs also removes the cross-file fact that made this case
+interesting. The agent can still find it with `read_file`, and can ask for the
+unfiltered scan — but "filter to the delta" and "the delta's danger lives
+elsewhere" genuinely pull in opposite directions, and base-vs-head diffing is
+the fix that satisfies both.
+
+**2. Ruleset choice drives recall more than scanner choice does.** One ruleset
+misses case 07; another flags it as an ERROR. Same tool, same file, same
+second. Sharper still: `p/security-audit`+`p/secrets` and `p/github-actions`
+score *identically* at 20% and catch **disjoint** cases. The aggregate hid a
+complete swap in which vulnerabilities were found.
+
+So ruleset selection is a routing decision, not a config default. Routing from
+the content of a diff is exactly what an LLM is good at — which is why
+`run_scanner` makes the *model* choose the ruleset from an enumerated,
+described list rather than hardcoding one. Whether it chooses well is then a
+measurable behavior, visible in `tool_calls`. (Running everything is not the
+free alternative: it costs wall-clock, and on a real codebase the union of
+every ruleset is where false alarms come from — the 0% here reflects a corpus
+of four small, clean safe cases, not a general property.)
+
+**3. Scanners report on state; review is about a delta.** Grype's four CVEs are
+all true, all irrelevant: they describe the dependency tree the submission
+inherited, not anything it did. Piping them into a review of a one-line diff
+is a precision disaster, and it directly contradicts the rubric's own
+instruction not to flag pre-existing issues.
+
+So `scan()` filters findings to files the submission touched, defaults to doing
+so, and reports the count it dropped. The model can ask for the unfiltered view
+with `include_unchanged_files`, and the render tells it what it is looking at.
+This is the shallow version of the right fix — the real one is scanning base
+and head and diffing the finding sets, which is listed as a gap below.
+
+### How it is wired
+
+```
+run_scanner(scanner, config, include_unchanged_files)
+  → scanners.scan(workspace, ...)
+      → scannable_path(workspace)          DirWorkspace: pass through
+                                           GitWorkspace: git archive → tmp → rm
+      → SCANNERS[name](root, config)       fixed argv, no shell, timeout
+      → filter to submission.files_changed
+      → cap at MAX_FINDINGS (80)
+  → ScanResult.render() back as a tool_result
+```
+
+The tool description tells the model three things the data above justifies: a
+hit is a lead to confirm by reading code rather than a finding to report; the
+`evidence` field must quote the code, not the scanner; and a clean scan is weak
+evidence, because these tools are blind to logic flaws. `ScanResult.render()`
+repeats the last point on every empty result, since that is the moment it
+matters.
+
+Safety properties of the subprocess layer: fixed argv with no shell, model
+input constrained to an enum plus a validated ruleset name, a 180-second
+timeout, and a scrubbed environment (`PATH` and `HOME` only — a scanner reading
+a hostile tree has no reason to inherit your credentials).
+
+Every scan lands in `ReviewResult.scans` and in the JSON report, so you can ask
+after the fact whether a finding came from the scanner or the model, and
+whether the model confirmed a scanner hit or ignored it.
+
+```bash
+abo eval --mode agent                     # baseline: LLM only
+abo eval --mode agent --scanners          # LLM + semgrep + grype
+abo eval --mode both --scanners           # oneshot, then agent+scanners
+```
+
+Scanner gaps, specifically:
+
+- **No base-vs-head diffing.** Filtering by changed file is coarse: a
+  pre-existing finding in a file the diff also touched still shows up. Scanning
+  both trees and subtracting is the correct fix and is not implemented.
+- **Only two scanners.** No secret scanner (gitleaks/trufflehog), no IaC
+  scanner (checkov), no `zizmor` for Actions, and no SARIF ingestion — which
+  would make any SARIF-emitting tool pluggable for roughly the cost of one
+  adapter.
+- **Grype needs a resolvable manifest.** It reads `requirements.txt` fine; a
+  lockfile-less or unusual layout yields nothing, silently.
+- **First Semgrep run is slow** (registry fetch, tens of seconds). Warm the
+  cache before timing anything.
+
+### Adding a scanner
+
+An adapter is a function returning `ScanResult`, plus two registry entries:
+
+```python
+# src/abo/scanners.py
+def run_gitleaks(root: Path, config: str = "",
+                 timeout_s: int = DEFAULT_TIMEOUT_S) -> ScanResult:
+    code, out, err = _run(
+        ["gitleaks", "detect", "--source", str(root), "--no-git",
+         "--report-format", "json", "--report-path", "-"],
+        timeout_s,
+    )
+    if not out.strip():
+        return ScanResult(scanner="gitleaks")          # no output == no secrets
+    findings = [
+        ScannerFinding(
+            scanner="gitleaks", rule=f.get("RuleID", "?"),
+            file=_rel(f.get("File", ""), root), line=int(f.get("StartLine", 0) or 0),
+            severity="HIGH", message=f.get("Description", ""),
+        )
+        for f in json.loads(out)
+    ]
+    return ScanResult(scanner="gitleaks", config="default", findings=findings)
+
+
+SCANNERS["gitleaks"] = run_gitleaks
+SCANNER_HELP["gitleaks"] = (
+    "Detects committed secrets by entropy and pattern. High recall on real "
+    "keys; will also flag test fixtures and example values."
+)
+```
+
+`SCANNER_HELP` goes straight into the tool description the model reads, so
+write it as guidance — including what the tool gets wrong. The `gitleaks` entry
+above warns about test fixtures precisely because case 04 is a published
+test-mode Stripe key, and a reviewer that trusts a secret scanner blindly will
+turn that TN into an FP.
+
+---
+
+## 3. Skills (proposed)
 
 None of this is implemented. The design below is what fits the architecture.
 
@@ -238,7 +454,7 @@ harness does:
 | `insecure-defaults` | case 06 — a fail-open default is exactly the `""` bug |
 | `constant-time-analysis` | cases 03 and 06 |
 | `variant-analysis` | "does this bug exist elsewhere in the repo" |
-| `second-opinion` | cross-model review, see Part 3 |
+| `second-opinion` | cross-model review, see Part 4 |
 
 Three ideas there are worth stealing outright:
 
@@ -363,16 +579,19 @@ Costs two extra steps per review that uses it.
 #### (c) Anthropic Agent Skills
 
 The API's own skills feature (`container={"skills": [...]}` with the code
-execution tool) is a real option, and it is the only one that gets you
-executable skill scripts — Semgrep, CodeQL, a SARIF parser, the things ToB's
-`static-analysis` plugin wraps.
+execution tool) gets you executable skill *scripts* — the batch-and-merge
+runner ToB's `static-analysis` plugin wraps, CodeQL database builds, SARIF
+post-processing.
 
-The tradeoff is the one this harness is built around: it means uploading the
-code under review into an execution container and running analyzers over it.
-The container is sandboxed and separate from your machine, so this is not
-reckless — but it does end the property that nothing anywhere executes the
-submission, and that property is currently free. If you want static analysis,
-the honest framing is that you are adding a sandbox, not just a tool.
+Worth being precise about the tradeoff, because an earlier draft of this
+document got it wrong. Running a static analyzer does **not** require a
+sandbox — that is what Part 2 does locally, with no execution of the
+submission. What the container buys you is somewhere to run *analysis
+pipelines*: multi-step scripts, tools that need a build (CodeQL wants a
+compiled database for some languages), and anything whose install footprint you
+don't want on the host. The cost is that your code under review is uploaded,
+and that a CodeQL-style build step does compile it. Reach for this when
+`run_scanner` is not enough, not as the default way to get static analysis.
 
 ### Skills worth writing first
 
@@ -393,13 +612,13 @@ measure whether it works.
 
 ---
 
-## 3. Multi-agent designs (proposed)
+## 4. Multi-agent designs (proposed)
 
 `ReviewConfig.mode` is dispatched in `Reviewer.review`, and every mode returns a
 `ReviewResult`. Anything below slots in without touching the harness or the
 scorer, and gets scored by the same metrics.
 
-### 3.1 Finder → verifier (fp-check)
+### 4.1 Finder → verifier (fp-check)
 
 Two agents. The first reviews as today. Each finding it produces is then handed
 to a fresh agent — clean context, same tools — asked to **refute** it: trace the
@@ -423,7 +642,7 @@ def _review_verified(self, submission):
 - **Borrowed from:** `fp-check`'s burden of proof — a FALSE POSITIVE verdict has
   to name where the chain breaks, not just assert that the code looks fine.
 
-### 3.2 Context pass → review pass
+### 4.2 Context pass → review pass
 
 Agent A doesn't judge anything. It reads the changed functions and their callers
 and produces a dossier: what each function assumes, what it guarantees, who
@@ -439,7 +658,7 @@ context.
 - **Borrowed from:** `audit-context-building` — "build understanding, not
   verdicts," and flag assumptions the code makes but never checks.
 
-### 3.3 Specialist panel
+### 4.3 Specialist panel
 
 Route by what the diff touched, run 2–3 specialists in parallel, each with a
 narrow rubric, then a synthesizer merges findings and issues one verdict.
@@ -456,7 +675,7 @@ attribution is clean.
   against a single agent with `load_skill` before paying for N agents — one
   agent that loads the right checklist may get most of the benefit.
 
-### 3.4 Escalation ladder
+### 4.4 Escalation ladder
 
 One-shot on everything. Spend agent mode only on submissions one-shot called
 `unsafe` or abstained on. Optionally add a third tier for disagreements.
@@ -469,7 +688,7 @@ One-shot on everything. Spend agent mode only on submissions one-shot called
   standalone first and check that one-shot's recall is high enough to be the
   first rung.
 
-### 3.5 Cross-model second opinion
+### 4.5 Cross-model second opinion
 
 Same submission, two models (`claude-opus-5` and `claude-sonnet-5`, say).
 Agreement passes through; disagreement escalates to a third call or to a human.
@@ -481,7 +700,7 @@ Agreement passes through; disagreement escalates to a third call or to a human.
 - **Borrowed from:** `second-opinion`, which asks a different tool entirely
   rather than the same model twice — the disagreement is the signal.
 
-### 3.6 Red team → corpus generation
+### 4.6 Red team → corpus generation
 
 The one the repo is named for. An adversarial agent is given the current rubric
 and the reviewer's recent misses, and writes new submissions designed to pass
@@ -519,21 +738,32 @@ way. Two rules make the comparison mean anything:
 
 ---
 
-## 4. Where to start
+## 5. Where to start
 
 If the question is *"what should I build next"*, in order of return:
 
-1. **`read_file_at_base`** — the single most valuable missing tool. It closes the
-   "was this check here before?" gap, which is the most common thing a reviewer
+1. **Run the three-way comparison you can already run.** `--mode oneshot`,
+   `--mode agent`, and `--mode agent --scanners` over the corpus at
+   `--repeat 3`. Semgrep alone gets 20–40% recall at 0% false alarms depending
+   on ruleset; the open question is whether handing those findings to the agent
+   adds recall, adds false alarms, or mostly adds tokens. Nothing below is
+   worth building before that number exists.
+2. **`read_file_at_base`** — the most valuable missing tool. It closes the "was
+   this check here before?" gap, which is the most common thing a reviewer
    needs and cannot get. Cheap: one `Workspace` method plus a tool definition.
-2. **The skill library (option b)** — makes skill selection observable, which
+   It also unlocks proper base-vs-head scan diffing.
+3. **A secret scanner** (gitleaks or trufflehog) — the corpus has both a real
+   exfiltration case and a deliberate test-fixture decoy, so it measures
+   precision and recall at once. One adapter, ~20 lines.
+4. **The skill library (option b)** — makes skill selection observable, which
    turns "do checklists help?" into something the harness can answer.
-3. **Finder → verifier (3.1)** — the only design here that attacks false alarms
+5. **Finder → verifier (4.1)** — the only design here that attacks false alarms
    rather than recall, and false alarms are what get a reviewer turned off.
-4. **More safe cases** — before any of the above produces a trustworthy number.
+6. **More safe cases** — before any of the above produces a trustworthy number.
 
-Implementation details for the first of these — the exact code for adding a
-tool, and the per-model caveats — are in [docs/extending.md](docs/extending.md).
+Implementation details — the exact code for adding a tool or a scanner, and the
+per-model caveats — are in [docs/extending.md](docs/extending.md) and
+[Adding a scanner](#adding-a-scanner) above.
 
 ## Sources
 

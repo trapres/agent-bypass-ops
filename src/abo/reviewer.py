@@ -18,6 +18,13 @@ from pydantic import ValidationError
 
 from .models import VERDICT_SCHEMA, Verdict
 from .prompts import system_prompt, user_prompt
+from .scanners import (
+    SCANNER_HELP,
+    SEMGREP_RULESETS,
+    ScannerError,
+    installed_scanners,
+    scan,
+)
 from .submission import Submission
 from .workspace import WorkspaceError
 
@@ -44,6 +51,10 @@ class ReviewConfig:
     max_steps: int = 12  # agent mode only
     thinking: bool = True
     fallbacks: bool = True  # server-side fallback on a policy refusal
+    # Off by default: the LLM-only score is the baseline everything else is
+    # measured against, so it must be the thing you get when you ask for nothing.
+    scanners: bool = False
+    scan_only_changed: bool = True
 
 
 @dataclass
@@ -87,6 +98,7 @@ class ReviewResult:
     duration_s: float = 0.0
     error: Optional[str] = None
     served_by: str = ""
+    scans: list = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -98,6 +110,9 @@ class ReviewResult:
             "duration_s": round(self.duration_s, 2),
             "error": self.error,
             "served_by": self.served_by,
+            # Kept so you can ask whether a finding came from the scanner or the
+            # model, and whether the model confirmed or ignored a scanner hit.
+            "scans": [s.to_dict() for s in self.scans],
         }
 
 
@@ -167,7 +182,55 @@ EXPLORE_TOOLS: list[dict[str, Any]] = [
     },
 ]
 
+#: Opt-in. The model picks the scanner *and* the ruleset, because ruleset
+#: choice drives recall more than scanner choice does — p/security-audit misses
+#: the pull_request_target case that p/github-actions catches at ERROR.
+RUN_SCANNER_TOOL: dict[str, Any] = {
+    "name": "run_scanner",
+    "description": (
+        "Run an open-source static analyzer over the project and return its findings. "
+        "The analyzer reads the code; it never executes it.\n\n"
+        + "\n".join(f"- {name}: {help_}" for name, help_ in SCANNER_HELP.items())
+        + "\n\nScanner output is evidence, not a verdict. A hit may be a false "
+        "positive — confirm it by reading the code before you report it, and cite "
+        "the code rather than the scanner. No findings is weak evidence of safety: "
+        "these tools match patterns and are blind to logic flaws such as a "
+        "permission check placed in the wrong order.\n\n"
+        "By default, findings in files this submission did not touch are dropped "
+        "as pre-existing; the result says how many."
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "scanner": {
+                "type": "string",
+                "enum": sorted(SCANNER_HELP),
+                "description": "Which analyzer to run.",
+            },
+            "config": {
+                "type": "string",
+                "description": (
+                    "For semgrep, the ruleset. Pick the one that matches what the "
+                    "diff touched — this choice matters more than any other:\n"
+                    + "\n".join(f"  {k}: {v}" for k, v in SEMGREP_RULESETS.items())
+                    + "\nIgnored by grype."
+                ),
+            },
+            "include_unchanged_files": {
+                "type": "boolean",
+                "description": (
+                    "Defaults to false. Set true only to inspect the project's "
+                    "pre-existing state; findings in untouched files are not this "
+                    "submission's doing."
+                ),
+            },
+        },
+        "required": ["scanner"],
+    },
+}
+
 AGENT_TOOLS = EXPLORE_TOOLS + [SUBMIT_VERDICT_TOOL]
+AGENT_TOOLS_WITH_SCANNERS = EXPLORE_TOOLS + [RUN_SCANNER_TOOL, SUBMIT_VERDICT_TOOL]
 
 
 def _abstain(summary: str) -> Verdict:
@@ -263,7 +326,7 @@ class Reviewer:
         system = [
             {
                 "type": "text",
-                "text": system_prompt("agent"),
+                "text": system_prompt("agent", scanners=cfg.scanners),
                 "cache_control": {"type": "ephemeral"},
             }
         ]
@@ -272,8 +335,10 @@ class Reviewer:
         ]
         nudged = False
 
+        tools = AGENT_TOOLS_WITH_SCANNERS if cfg.scanners else AGENT_TOOLS
+
         for step in range(cfg.max_steps):
-            response = self._create(system=system, messages=messages, tools=AGENT_TOOLS)
+            response = self._create(system=system, messages=messages, tools=tools)
             result.usage.add(response.usage)
             result.steps = step + 1
             result.served_by = getattr(response, "model", "") or ""
@@ -315,7 +380,9 @@ class Reviewer:
             tool_results = []
             for block in tool_uses:
                 result.tool_calls.append(f"{block.name}({_brief(block.input)})")
-                content, is_error = self._run_tool(submission, block.name, block.input)
+                content, is_error = self._run_tool(
+                    submission, block.name, block.input, collect=result.scans
+                )
                 tool_results.append(
                     {
                         "type": "tool_result",
@@ -332,7 +399,15 @@ class Reviewer:
 
     # -- tool dispatch -----------------------------------------------------
 
-    def _run_tool(self, submission: Submission, name: str, args: dict[str, Any]) -> tuple[str, bool]:
+    def _run_tool(
+        self,
+        submission: Submission,
+        name: str,
+        args: dict[str, Any],
+        collect: Optional[list] = None,
+    ) -> tuple[str, bool]:
+        # `collect` is the calling review's scan list. Reviewer instances are
+        # shared across threads by run_eval, so nothing per-review lives on self.
         ws = submission.workspace
         try:
             if name == "list_files":
@@ -350,7 +425,22 @@ class Reviewer:
             if name == "grep":
                 hits = ws.grep(args["pattern"], args.get("path_glob", "") or "")
                 return ("\n".join(hits) or "(no matches)", False)
+            if name == "run_scanner":
+                only_changed = not bool(args.get("include_unchanged_files", False))
+                scan_result = scan(
+                    ws,
+                    scanner=args["scanner"],
+                    config=args.get("config", "") or "",
+                    changed_files=submission.files_changed,
+                    only_changed=only_changed and self.config.scan_only_changed,
+                )
+                if collect is not None:
+                    collect.append(scan_result)
+                return (scan_result.render(), False)
             return (f"unknown tool: {name}", True)
+        except ScannerError as exc:
+            # A missing or failing scanner degrades the review; it never ends it.
+            return (f"Error: {exc}", True)
         except WorkspaceError as exc:
             return (f"Error: {exc}", True)
         except KeyError as exc:

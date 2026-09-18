@@ -29,6 +29,7 @@ def _config_from_args(args: argparse.Namespace, mode: str) -> ReviewConfig:
         max_steps=args.max_steps,
         thinking=not args.no_thinking,
         fallbacks=not args.no_fallbacks,
+        scanners=getattr(args, "scanners", False),
     )
 
 
@@ -68,18 +69,55 @@ def _add_model_args(p: argparse.ArgumentParser) -> None:
     p.add_argument("--no-thinking", action="store_true", help="disable adaptive thinking")
     p.add_argument("--no-fallbacks", action="store_true",
                    help="disable the server-side refusal fallback")
+    p.add_argument("--scanners", action="store_true",
+                   help="give the agent run_scanner (semgrep, grype). Off by default: "
+                        "the LLM-only score is the baseline. Agent mode only.")
     p.add_argument("--dry-run", action="store_true",
                    help="print the assembled prompts and exit without calling the API")
 
 
-def _dry_run(submission: Submission, mode: str) -> None:
+def _dry_run(submission: Submission, mode: str, scanners: bool = False) -> None:
     console.rule(f"[bold]system prompt ({mode})")
-    console.print(system_prompt(mode), highlight=False)
+    console.print(system_prompt(mode, scanners=scanners), highlight=False)
     console.rule(f"[bold]user prompt ({mode})")
     console.print(user_prompt(submission, mode), highlight=False)
     if mode == "agent":
         console.rule("[bold]workspace")
         console.print(submission.workspace.describe())
+        if scanners:
+            from .scanners import installed_scanners
+
+            console.rule("[bold]scanners")
+            for name, ok in installed_scanners().items():
+                console.print(f"  {'✓' if ok else '✗'} {name}")
+
+
+def _warn_scanners(mode: str) -> bool:
+    """Say plainly what --scanners will and won't do before spending anything."""
+    from .scanners import installed_scanners
+
+    if mode == "oneshot":
+        err_console.print(
+            "[red]--scanners has no effect in oneshot mode[/red] (there is no tool "
+            "loop to call them from). Use --mode agent or --mode both."
+        )
+        return False
+    status = installed_scanners()
+    missing = [n for n, ok in status.items() if not ok]
+    if not any(status.values()):
+        err_console.print(
+            f"[red]--scanners requested but none are installed[/red] "
+            f"({', '.join(sorted(status))}). Install at least one, or drop the flag."
+        )
+        return False
+    if missing:
+        console.print(
+            f"[yellow]not installed, will be unavailable to the agent: "
+            f"{', '.join(missing)}[/yellow]"
+        )
+    if mode == "both":
+        console.print("[dim]scanners apply to the agent run only; oneshot is unaffected.[/dim]")
+    return True
 
 
 def cmd_eval(args: argparse.Namespace) -> int:
@@ -92,8 +130,13 @@ def cmd_eval(args: argparse.Namespace) -> int:
         for mode in _modes(args.mode):
             for case in cases:
                 console.rule(f"[bold cyan]{case.id} — {case.label}")
-                _dry_run(case.submission, mode)
+                _dry_run(case.submission, mode, scanners=args.scanners)
         return 0
+
+    # Config errors before credential resolution — a bad flag combination is
+    # diagnosable without an API key.
+    if args.scanners and not _warn_scanners(args.mode):
+        return 1
 
     if not _have_credentials():
         return 1
@@ -101,9 +144,10 @@ def cmd_eval(args: argparse.Namespace) -> int:
     exit_code = 0
     for mode in _modes(args.mode):
         config = _config_from_args(args, mode)
+        scan_note = ", scanners=on" if (config.scanners and mode == "agent") else ""
         console.print(
             f"[bold]Running {len(cases)} case(s) × {args.repeat} "
-            f"— mode={mode}, model={config.model}, effort={config.effort}[/bold]"
+            f"— mode={mode}, model={config.model}, effort={config.effort}{scan_note}[/bold]"
         )
         with console.status("reviewing...") as status:
             def progress(case_id: str, verdict) -> None:
@@ -124,7 +168,8 @@ def _write_report(report: EvalReport, explicit_path: str | None) -> None:
         path = Path(explicit_path)
     else:
         stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-        path = Path("runs") / f"{stamp}-{report.config.mode}.json"
+        suffix = "-scanners" if report.config.scanners else ""
+        path = Path("runs") / f"{stamp}-{report.config.mode}{suffix}.json"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(report.to_dict(), indent=2))
     console.print(f"[dim]report written to {path}[/dim]")
@@ -145,12 +190,14 @@ def cmd_review(args: argparse.Namespace) -> int:
         err_console.print("[red]empty diff — nothing to review[/red]")
         return 1
 
+    if args.scanners and not args.dry_run and not _warn_scanners(args.mode):
+        return 1
     if not args.dry_run and not _have_credentials():
         return 1
 
     for mode in _modes(args.mode):
         if args.dry_run:
-            _dry_run(submission, mode)
+            _dry_run(submission, mode, scanners=args.scanners)
             continue
         config = _config_from_args(args, mode)
         console.rule(f"[bold]{submission.id} — {mode}")

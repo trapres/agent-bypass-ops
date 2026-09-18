@@ -121,6 +121,8 @@ class EvalReport:
                 "effort": self.config.effort,
                 "max_steps": self.config.max_steps,
                 "thinking": self.config.thinking,
+                # Recorded so two saved reports are distinguishable after the fact.
+                "scanners": self.config.scanners,
             },
             "metrics": self.metrics(),
             "counts": dict(self.counts()),
