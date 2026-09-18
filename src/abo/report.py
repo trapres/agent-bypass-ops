@@ -70,7 +70,7 @@ def render_eval(report: EvalReport) -> None:
         "tokens",
         f"in {usage.input_tokens:,} / out {usage.output_tokens:,} / cached {usage.cache_read_tokens:,}",
     )
-    summary.add_row("cost", f"${usage.cost(report.config.model):.3f}")
+    summary.add_row("cost", f"${usage.cost(report.config.model, report.config.provider):.3f}")
     console.print(Panel(summary, title="Summary", expand=False))
 
     misses = [
@@ -92,7 +92,8 @@ def render_eval(report: EvalReport) -> None:
                 console.print(f"      [dim]case note: {outcome.case.notes}[/dim]")
 
 
-def render_review(result: ReviewResult, config_model: str) -> None:
+def render_review(result: ReviewResult, config_model: str,
+                  provider: str = "anthropic") -> None:
     v: Verdict = result.verdict
     header = Text.assemble(
         (v.verdict.upper(), VERDICT_STYLE.get(v.verdict, "white")),
@@ -137,7 +138,7 @@ def render_review(result: ReviewResult, config_model: str) -> None:
     console.print(
         f"\n[dim]{result.usage.input_tokens:,} in / {result.usage.output_tokens:,} out / "
         f"{result.usage.cache_read_tokens:,} cached · "
-        f"${result.usage.cost(config_model):.4f} · {result.duration_s:.1f}s[/dim]"
+        f"${result.usage.cost(config_model, provider):.4f} · {result.duration_s:.1f}s[/dim]"
     )
     if result.error:
         console.print(f"[red]error: {result.error}[/red]")

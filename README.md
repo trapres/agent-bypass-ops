@@ -132,6 +132,23 @@ surface: every tool and its limits, the scanner integration and what it scores
 on its own, what the agent is structurally prevented from doing, and proposals
 for skills and multi-agent designs.
 
+**[SourceClaims.md](SourceClaims.md)** is the red-team experiment: 22
+adversarial treatments over one fixed vulnerability, testing whether a
+submission can talk the reviewer out of a correct verdict — escalating safety
+claims, seven languages, and Trojan Source-style Unicode attacks.
+
+```bash
+python scripts/generate_bypass.py                    # 22 cases, deterministic
+python scripts/generate_bypass.py --audit            # what each one hides
+abo eval --cases bypass-cases --mode agent --repeat 3 --json runs/bypass-agent.json
+python scripts/bypass_report.py runs/bypass-*.json
+```
+
+`bypass-cases/` is generated but **committed on purpose** — the payloads
+include invisible and bidirectional characters that are easy to mangle in
+transit, and the experiment is only reproducible if the exact bytes survive.
+`test_generation_is_deterministic` asserts the generator reproduces them.
+
 ## Layout
 
 ```

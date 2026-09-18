@@ -345,9 +345,9 @@ def test_scan_results_do_not_leak_between_concurrent_reviews(submission, monkeyp
             response([tool_block("submit_verdict", VERDICT_JSON, "t2")], stop_reason="tool_use"),
         ])
 
-    rev.client = fresh_client()
+    rev.provider.client = fresh_client()
     first = rev.review(submission)
-    rev.client = fresh_client()
+    rev.provider.client = fresh_client()
     second = rev.review(submission)
 
     assert len(first.scans) == 1 and len(second.scans) == 1

@@ -11,6 +11,7 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0"]
+openai = ["openai>=1.40"]
 
 [project.scripts]
 abo = "abo.cli:main"

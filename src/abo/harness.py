@@ -117,6 +117,7 @@ class EvalReport:
             "started_at": self.started_at,
             "config": {
                 "mode": self.config.mode,
+                "provider": self.config.provider,
                 "model": self.config.model,
                 "effort": self.config.effort,
                 "max_steps": self.config.max_steps,
@@ -127,7 +128,7 @@ class EvalReport:
             "metrics": self.metrics(),
             "counts": dict(self.counts()),
             "usage": self.total_usage().to_dict(),
-            "cost_usd": round(self.total_usage().cost(self.config.model), 4),
+            "cost_usd": round(self.total_usage().cost(self.config.model, self.config.provider), 4),
             "cases": [
                 {
                     "id": o.case.id,

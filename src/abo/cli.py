@@ -20,9 +20,29 @@ DEFAULT_CASES = Path(__file__).resolve().parents[2] / "cases"
 err_console = Console(stderr=True)
 
 
-def _config_from_args(args: argparse.Namespace, mode: str) -> ReviewConfig:
+def _resolve_provider(args: argparse.Namespace) -> str | None:
+    """Explicit --provider wins; otherwise infer from whichever key is set."""
+    from .providers import detect_provider
+
+    if getattr(args, "provider", None):
+        return args.provider
+    found = detect_provider()
+    if found is None:
+        err_console.print(
+            "[red]no provider credentials found.[/red] Set ANTHROPIC_API_KEY or "
+            "OPENAI_API_KEY (or run `ant auth login`), or pass --provider "
+            "explicitly. Use --dry-run to inspect prompts without an API."
+        )
+        return None
+    console.print(f"[dim]provider: {found} (auto-detected from environment)[/dim]")
+    return found
+
+
+def _config_from_args(args: argparse.Namespace, mode: str,
+                      provider: str = "anthropic") -> ReviewConfig:
     return ReviewConfig(
         mode=mode,
+        provider=provider,
         model=args.model,
         effort=args.effort,
         max_tokens=args.max_tokens,
@@ -37,24 +57,21 @@ def _modes(arg: str) -> list[str]:
     return ["oneshot", "agent"] if arg == "both" else [arg]
 
 
-def _have_credentials() -> bool:
+def _have_credentials(provider: str) -> bool:
     """Fail up front rather than after burning a run on every case.
 
-    The SDK resolves credentials lazily — constructing a client succeeds with
-    none set and only fails at request time. `auth_headers` is empty when
-    nothing resolved; we check for its presence, never its value.
+    SDKs resolve credentials lazily — constructing a client succeeds with none
+    set and only fails at request time.
     """
-    import anthropic
+    from .providers import credentials_present
 
-    try:
-        if anthropic.Anthropic().auth_headers:
-            return True
-    except Exception:
-        pass
+    if credentials_present(provider):
+        return True
+    want = "OPENAI_API_KEY" if provider == "openai" else "ANTHROPIC_API_KEY"
     err_console.print(
-        "[red]no API credentials resolved.[/red] "
-        "Set ANTHROPIC_API_KEY (or run `ant auth login`). "
-        "Use --dry-run to inspect prompts without calling the API."
+        f"[red]no {provider} credentials resolved.[/red] Set {want}"
+        + ("" if provider == "openai" else " (or run `ant auth login`)")
+        + ". Use --dry-run to inspect prompts without calling the API."
     )
     return False
 
@@ -62,7 +79,10 @@ def _have_credentials() -> bool:
 def _add_model_args(p: argparse.ArgumentParser) -> None:
     p.add_argument("--mode", choices=["agent", "oneshot", "both"], default="agent",
                    help="agent: read-only tools over the repo. oneshot: diff in one prompt. (default: agent)")
-    p.add_argument("--model", default="claude-opus-5")
+    p.add_argument("--provider", choices=["anthropic", "openai"],
+                   help="default: inferred from ANTHROPIC_API_KEY / OPENAI_API_KEY")
+    p.add_argument("--model", default=None,
+                   help="default: claude-opus-5 (anthropic) or gpt-5 (openai)")
     p.add_argument("--effort", choices=["low", "medium", "high", "xhigh", "max"], default="high")
     p.add_argument("--max-tokens", type=int, default=16_000)
     p.add_argument("--max-steps", type=int, default=12, help="agent mode turn limit (default: 12)")
@@ -138,16 +158,18 @@ def cmd_eval(args: argparse.Namespace) -> int:
     if args.scanners and not _warn_scanners(args.mode):
         return 1
 
-    if not _have_credentials():
+    provider = _resolve_provider(args)
+    if provider is None or not _have_credentials(provider):
         return 1
 
     exit_code = 0
     for mode in _modes(args.mode):
-        config = _config_from_args(args, mode)
+        config = _config_from_args(args, mode, provider)
         scan_note = ", scanners=on" if (config.scanners and mode == "agent") else ""
         console.print(
             f"[bold]Running {len(cases)} case(s) × {args.repeat} "
-            f"— mode={mode}, model={config.model}, effort={config.effort}{scan_note}[/bold]"
+            f"— {config.provider}/{config.model}, mode={mode}, "
+            f"effort={config.effort}{scan_note}[/bold]"
         )
         with console.status("reviewing...") as status:
             def progress(case_id: str, verdict) -> None:
@@ -192,17 +214,21 @@ def cmd_review(args: argparse.Namespace) -> int:
 
     if args.scanners and not args.dry_run and not _warn_scanners(args.mode):
         return 1
-    if not args.dry_run and not _have_credentials():
-        return 1
+    provider = "anthropic"
+    if not args.dry_run:
+        resolved = _resolve_provider(args)
+        if resolved is None or not _have_credentials(resolved):
+            return 1
+        provider = resolved
 
     for mode in _modes(args.mode):
         if args.dry_run:
             _dry_run(submission, mode, scanners=args.scanners)
             continue
-        config = _config_from_args(args, mode)
+        config = _config_from_args(args, mode, provider)
         console.rule(f"[bold]{submission.id} — {mode}")
         result = Reviewer(config).review(submission)
-        render_review(result, config.model)
+        render_review(result, config.model, config.provider)
         if args.json:
             Path(args.json).write_text(json.dumps(result.to_dict(), indent=2))
     return 0

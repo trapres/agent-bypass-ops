@@ -13,39 +13,23 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
-import anthropic
 from pydantic import ValidationError
 
 from .models import VERDICT_SCHEMA, Verdict
 from .prompts import system_prompt, user_prompt
-from .scanners import (
-    SCANNER_HELP,
-    SEMGREP_RULESETS,
-    ScannerError,
-    installed_scanners,
-    scan,
-)
+from .providers import DEFAULT_MODELS, PRICES, REFUSAL, Response, build_provider
+from .scanners import SCANNER_HELP, SEMGREP_RULESETS, ScannerError, scan
 from .submission import Submission
 from .workspace import WorkspaceError
 
 MAX_TOOL_RESULT_CHARS = 20_000
 
-# $ per 1M tokens (input, output). Cache reads bill at 0.1x input, writes at 1.25x.
-PRICES = {
-    "claude-fable-5": (10.0, 50.0),
-    "claude-opus-5": (5.0, 25.0),
-    "claude-opus-4-8": (5.0, 25.0),
-    "claude-sonnet-5": (3.0, 15.0),
-    "claude-haiku-4-5": (1.0, 5.0),
-}
-
-FALLBACK_BETA = "server-side-fallback-2026-07-01"
-
 
 @dataclass
 class ReviewConfig:
     mode: str = "agent"  # "agent" | "oneshot"
-    model: str = "claude-opus-5"
+    provider: str = "anthropic"  # "anthropic" | "openai"
+    model: str = ""  # empty -> the provider's default
     effort: str = "high"  # low | medium | high | xhigh | max
     max_tokens: int = 16_000
     max_steps: int = 12  # agent mode only
@@ -56,6 +40,12 @@ class ReviewConfig:
     scanners: bool = False
     scan_only_changed: bool = True
 
+    def __post_init__(self) -> None:
+        # `--provider openai` alone should work without also demanding a model
+        # the other vendor has never heard of.
+        if not self.model:
+            self.model = DEFAULT_MODELS[self.provider]
+
 
 @dataclass
 class Usage:
@@ -65,13 +55,21 @@ class Usage:
     cache_write_tokens: int = 0
 
     def add(self, u: Any) -> None:
+        """Accept a raw Anthropic usage object (kept for direct callers)."""
         self.input_tokens += getattr(u, "input_tokens", 0) or 0
         self.output_tokens += getattr(u, "output_tokens", 0) or 0
         self.cache_read_tokens += getattr(u, "cache_read_input_tokens", 0) or 0
         self.cache_write_tokens += getattr(u, "cache_creation_input_tokens", 0) or 0
 
-    def cost(self, model: str) -> float:
-        in_price, out_price = PRICES.get(model, (0.0, 0.0))
+    def add_normalized(self, d: dict) -> None:
+        """Accept the provider-normalized dict."""
+        self.input_tokens += d.get("input_tokens", 0)
+        self.output_tokens += d.get("output_tokens", 0)
+        self.cache_read_tokens += d.get("cache_read_tokens", 0)
+        self.cache_write_tokens += d.get("cache_write_tokens", 0)
+
+    def cost(self, model: str, provider: str = "anthropic") -> float:
+        in_price, out_price = PRICES.get(provider, {}).get(model, (0.0, 0.0))
         return (
             self.input_tokens * in_price
             + self.cache_read_tokens * in_price * 0.1
@@ -245,35 +243,16 @@ def _refusal_summary(response: Any) -> str:
 
 
 class Reviewer:
-    def __init__(self, config: ReviewConfig, client: Optional[anthropic.Anthropic] = None):
+    def __init__(self, config: ReviewConfig, client: Any = None):
         self.config = config
-        self.client = client or anthropic.Anthropic()
+        self.provider = build_provider(config.provider, client)
+        # Kept for tests and callers that reach for the underlying SDK client.
+        self.client = getattr(self.provider, "client", client)
 
     # -- transport ---------------------------------------------------------
 
     def _create(self, **kwargs: Any) -> Any:
-        cfg = self.config
-        # Stable prefix first (tools, then system) so the cached block covers
-        # everything that does not vary between submissions.
-        params: dict[str, Any] = {
-            "model": cfg.model,
-            "max_tokens": cfg.max_tokens,
-            **kwargs,
-        }
-        # Explicit either way. Omitting the parameter does not mean "off": on
-        # Opus 5 and Fable 5 it runs adaptive anyway, so --no-thinking would
-        # silently do nothing.
-        params["thinking"] = {"type": "adaptive"} if cfg.thinking else {"type": "disabled"}
-        output_config = params.setdefault("output_config", {})
-        output_config["effort"] = cfg.effort
-
-        if cfg.fallbacks:
-            # A reviewer reading hostile diffs can trip a policy classifier; a
-            # server-side fallback rescues the request inside the same call.
-            return self.client.beta.messages.create(
-                betas=[FALLBACK_BETA], fallbacks="default", **params
-            )
-        return self.client.messages.create(**params)
+        return self.provider.create(config=self.config, **kwargs)
 
     # -- public API --------------------------------------------------------
 
@@ -293,105 +272,95 @@ class Reviewer:
     def _review_oneshot(self, submission: Submission) -> ReviewResult:
         result = ReviewResult(submission_id=submission.id, verdict=_abstain("not run"))
         response = self._create(
-            system=[
-                {
-                    "type": "text",
-                    "text": system_prompt("oneshot"),
-                    "cache_control": {"type": "ephemeral"},
-                }
-            ],
-            messages=[{"role": "user", "content": user_prompt(submission, "oneshot")}],
-            output_config={"format": {"type": "json_schema", "schema": VERDICT_SCHEMA}},
+            system=system_prompt("oneshot"),
+            messages=[self.provider.user_message(user_prompt(submission, "oneshot"))],
+            tools=None,
+            response_schema=VERDICT_SCHEMA,
         )
-        result.usage.add(response.usage)
+        self._record(result, response)
         result.steps = 1
-        result.served_by = getattr(response, "model", "") or ""
 
-        if response.stop_reason == "refusal":
-            result.verdict = _abstain(_refusal_summary(response))
+        if response.stop_reason == REFUSAL:
+            result.verdict = _abstain(f"Model declined to answer. {response.refusal_detail}")
             result.error = "refusal"
             return result
 
-        text = next((b.text for b in response.content if b.type == "text"), "")
         try:
-            result.verdict = Verdict.model_validate(json.loads(text))
+            result.verdict = Verdict.model_validate(json.loads(response.text))
         except (json.JSONDecodeError, ValidationError) as exc:
             result.verdict = _abstain(f"could not parse verdict: {exc}")
             result.error = f"parse_error: {exc}"
         return result
 
+    def _record(self, result: ReviewResult, response: Response) -> None:
+        result.usage.add_normalized(self.provider.normalize_usage(response.usage))
+        result.served_by = response.model
+
     def _review_agent(self, submission: Submission) -> ReviewResult:
         cfg = self.config
         result = ReviewResult(submission_id=submission.id, verdict=_abstain("not run"))
-        system = [
-            {
-                "type": "text",
-                "text": system_prompt("agent", scanners=cfg.scanners),
-                "cache_control": {"type": "ephemeral"},
-            }
-        ]
-        messages: list[dict[str, Any]] = [
-            {"role": "user", "content": user_prompt(submission, "agent")}
+        system = system_prompt("agent", scanners=cfg.scanners)
+        messages: list[Any] = [
+            self.provider.user_message(user_prompt(submission, "agent"))
         ]
         nudged = False
 
         tools = AGENT_TOOLS_WITH_SCANNERS if cfg.scanners else AGENT_TOOLS
 
         for step in range(cfg.max_steps):
-            response = self._create(system=system, messages=messages, tools=tools)
-            result.usage.add(response.usage)
+            response = self._create(
+                system=system, messages=messages, tools=tools, response_schema=None
+            )
+            self._record(result, response)
             result.steps = step + 1
-            result.served_by = getattr(response, "model", "") or ""
 
-            if response.stop_reason == "refusal":
-                result.verdict = _abstain(_refusal_summary(response))
+            if response.stop_reason == REFUSAL:
+                result.verdict = _abstain(
+                    f"Model declined to answer. {response.refusal_detail}"
+                )
                 result.error = "refusal"
                 return result
 
-            tool_uses = [b for b in response.content if b.type == "tool_use"]
-            if not tool_uses:
+            if not response.tool_uses:
                 if nudged:
-                    text = next((b.text for b in response.content if b.type == "text"), "")
-                    result.verdict = _abstain("model ended its turn without calling submit_verdict")
-                    result.error = f"no_verdict_tool_call: {text[:400]}"
+                    result.verdict = _abstain(
+                        "model ended its turn without calling submit_verdict"
+                    )
+                    result.error = f"no_verdict_tool_call: {response.text[:400]}"
                     return result
                 nudged = True
-                messages.append({"role": "assistant", "content": response.content})
+                messages.append(response.assistant_message)
                 messages.append(
-                    {
-                        "role": "user",
-                        "content": "Call submit_verdict now with your decision.",
-                    }
+                    self.provider.user_message(
+                        "Call submit_verdict now with your decision."
+                    )
                 )
                 continue
 
-            messages.append({"role": "assistant", "content": response.content})
+            messages.append(response.assistant_message)
 
-            verdict_block = next((b for b in tool_uses if b.name == "submit_verdict"), None)
-            if verdict_block is not None:
+            verdict_call = next(
+                (t for t in response.tool_uses if t.name == "submit_verdict"), None
+            )
+            if verdict_call is not None:
                 result.tool_calls.append("submit_verdict")
                 try:
-                    result.verdict = Verdict.model_validate(verdict_block.input)
+                    result.verdict = Verdict.model_validate(verdict_call.input)
                 except ValidationError as exc:
                     result.verdict = _abstain(f"invalid verdict payload: {exc}")
                     result.error = f"validation_error: {exc}"
                 return result
 
             tool_results = []
-            for block in tool_uses:
-                result.tool_calls.append(f"{block.name}({_brief(block.input)})")
+            for call in response.tool_uses:
+                result.tool_calls.append(f"{call.name}({_brief(call.input)})")
                 content, is_error = self._run_tool(
-                    submission, block.name, block.input, collect=result.scans
+                    submission, call.name, call.input, collect=result.scans
                 )
                 tool_results.append(
-                    {
-                        "type": "tool_result",
-                        "tool_use_id": block.id,
-                        "content": content[:MAX_TOOL_RESULT_CHARS],
-                        "is_error": is_error,
-                    }
+                    (call.id, content[:MAX_TOOL_RESULT_CHARS], is_error)
                 )
-            messages.append({"role": "user", "content": tool_results})
+            messages.extend(self.provider.tool_results(tool_results))
 
         result.verdict = _abstain(f"reviewer did not conclude within {cfg.max_steps} steps")
         result.error = "step_limit"
