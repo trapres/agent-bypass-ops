@@ -244,6 +244,113 @@ def test_credentials_present_for_openai(monkeypatch):
     assert credentials_present("openai") is True
 
 
+# -- workload identity federation ---------------------------------------------
+
+WIF_ENV = {
+    "ANTHROPIC_FEDERATION_RULE_ID": "frule_x",
+    "ANTHROPIC_ORGANIZATION_ID": "org_x",
+    "ANTHROPIC_SERVICE_ACCOUNT_ID": "sa_x",
+    "ANTHROPIC_IDENTITY_TOKEN": "eyJfake",
+}
+
+ALL_CRED_VARS = [
+    "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_PROFILE",
+    "OPENAI_API_KEY", "ANTHROPIC_IDENTITY_TOKEN_FILE", *WIF_ENV,
+]
+
+
+@pytest.fixture
+def clean_env(monkeypatch):
+    for v in ALL_CRED_VARS:
+        monkeypatch.delenv(v, raising=False)
+    return monkeypatch
+
+
+def test_wif_counts_as_anthropic_credentials(clean_env):
+    """Regression: auth_headers is empty under WIF because the token exchange
+    is lazy, so probing it would wrongly refuse to run."""
+    from abo.providers import wif_configured
+
+    assert credentials_present("anthropic") is False
+    for k, v in WIF_ENV.items():
+        clean_env.setenv(k, v)
+    assert wif_configured() is True
+    assert credentials_present("anthropic") is True
+    assert detect_provider() == "anthropic"
+
+
+def test_wif_accepts_a_token_file_instead_of_an_inline_token(clean_env):
+    from abo.providers import wif_configured
+
+    for k, v in WIF_ENV.items():
+        if k != "ANTHROPIC_IDENTITY_TOKEN":
+            clean_env.setenv(k, v)
+    assert wif_configured() is False
+    clean_env.setenv("ANTHROPIC_IDENTITY_TOKEN_FILE", "/var/run/token")
+    assert wif_configured() is True
+
+
+def test_partial_wif_reports_exactly_what_is_missing(clean_env):
+    from abo.providers import wif_partial
+
+    assert wif_partial() == []  # nothing set at all is not "partial"
+    clean_env.setenv("ANTHROPIC_FEDERATION_RULE_ID", "frule_x")
+    missing = wif_partial()
+    assert "ANTHROPIC_ORGANIZATION_ID" in missing
+    assert "ANTHROPIC_SERVICE_ACCOUNT_ID" in missing
+    assert any("IDENTITY_TOKEN" in m for m in missing)
+
+
+def test_an_ant_auth_login_profile_counts_as_credentials(clean_env, tmp_path):
+    """Regression: profiles resolve lazily too, so auth_headers is empty under
+    a perfectly good `ant auth login`. Probing it refused to run."""
+    from abo.providers import oauth_profile_present
+
+    clean_env.setenv("ANTHROPIC_CONFIG_DIR", str(tmp_path))
+    assert oauth_profile_present() is False
+    assert credentials_present("anthropic") is False
+
+    creds = tmp_path / "credentials"
+    creds.mkdir()
+    (creds / "default.json").write_text('{"access_token": "x"}')
+
+    assert oauth_profile_present() is True
+    assert credentials_present("anthropic") is True
+    assert detect_provider() == "anthropic"
+
+
+def test_an_explicitly_named_profile_counts_even_without_files(clean_env, tmp_path):
+    from abo.providers import oauth_profile_present
+
+    clean_env.setenv("ANTHROPIC_CONFIG_DIR", str(tmp_path))
+    clean_env.setenv("ANTHROPIC_PROFILE", "dev")
+    # A missing named profile is an error downstream, not a fall-through, so
+    # the harness should proceed and let the SDK report it.
+    assert oauth_profile_present() is True
+
+
+def test_config_dir_honours_the_env_override(clean_env, tmp_path):
+    from abo.providers import config_dir
+
+    clean_env.setenv("ANTHROPIC_CONFIG_DIR", str(tmp_path))
+    assert config_dir() == tmp_path
+    clean_env.delenv("ANTHROPIC_CONFIG_DIR")
+    assert config_dir().name == "anthropic"
+
+
+@pytest.mark.parametrize("shadow", ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN",
+                                    "ANTHROPIC_PROFILE"])
+def test_empty_string_env_vars_still_shadow_wif(clean_env, shadow):
+    """The trap: these outrank federation even when set to an empty string."""
+    from abo.providers import wif_shadowed_by
+
+    for k, v in WIF_ENV.items():
+        clean_env.setenv(k, v)
+    assert wif_shadowed_by() == []
+    clean_env.setenv(shadow, "")          # empty, not absent
+    assert wif_shadowed_by() == [shadow]
+
+
 # -- the two providers stay interchangeable ------------------------------------
 
 

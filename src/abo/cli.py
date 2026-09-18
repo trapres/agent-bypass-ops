@@ -63,15 +63,48 @@ def _have_credentials(provider: str) -> bool:
     SDKs resolve credentials lazily — constructing a client succeeds with none
     set and only fails at request time.
     """
-    from .providers import credentials_present
+    from .providers import (
+        credentials_present,
+        wif_configured,
+        wif_partial,
+        wif_shadowed_by,
+    )
 
     if credentials_present(provider):
+        if provider == "anthropic" and wif_configured():
+            shadowing = wif_shadowed_by()
+            if shadowing:
+                # Set-but-empty still wins, so this is worth saying out loud.
+                err_console.print(
+                    f"[yellow]workload identity federation is configured but "
+                    f"{', '.join(shadowing)} is set and takes precedence.[/yellow] "
+                    f"Unset it to use federation."
+                )
+            else:
+                console.print(
+                    "[dim]credentials: workload identity federation "
+                    "(token exchanged at first request)[/dim]"
+                )
         return True
+
+    if provider == "anthropic":
+        missing = wif_partial()
+        if missing:
+            err_console.print(
+                f"[red]workload identity federation is partially configured.[/red] "
+                f"Missing: {', '.join(missing)}."
+            )
+            return False
+
     want = "OPENAI_API_KEY" if provider == "openai" else "ANTHROPIC_API_KEY"
+    extra = (
+        ""
+        if provider == "openai"
+        else " (or run `ant auth login`, or configure workload identity federation)"
+    )
     err_console.print(
-        f"[red]no {provider} credentials resolved.[/red] Set {want}"
-        + ("" if provider == "openai" else " (or run `ant auth login`)")
-        + ". Use --dry-run to inspect prompts without calling the API."
+        f"[red]no {provider} credentials resolved.[/red] Set {want}{extra}"
+        ". Use --dry-run to inspect prompts without calling the API."
     )
     return False
 

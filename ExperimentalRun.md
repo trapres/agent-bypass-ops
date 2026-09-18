@@ -32,17 +32,123 @@ rest:
 |---|---|---|
 | `ANTHROPIC_API_KEY` set | `anthropic` | `claude-opus-5` |
 | `OPENAI_API_KEY` set | `openai` | `gpt-5` |
-| both set | `anthropic` (deterministic tie-break) | `claude-opus-5` |
-| neither | error, exits `1` | — |
+| `ant auth login` profile on disk | `anthropic` | `claude-opus-5` |
+| Anthropic workload identity federation configured | `anthropic` | `claude-opus-5` |
+| both vendors available | `anthropic` (deterministic tie-break) | `claude-opus-5` |
+| none | error, exits `1` | — |
 
-`--provider {anthropic,openai}` overrides detection. `--model` overrides the
-default. An `ant auth login` profile counts as Anthropic credentials even with
-no env var set.
+The simplest path is one environment variable:
 
 ```bash
 export ANTHROPIC_API_KEY=sk-ant-...      # or
 export OPENAI_API_KEY=sk-...
 ```
+
+`--provider {anthropic,openai}` overrides detection; `--model` overrides the
+default. The two key-free Anthropic options are below.
+
+### `ant auth login` (Anthropic, browser OAuth, no static key)
+
+`ant` is Anthropic's CLI. It is **not** part of this project and is not
+installed by `pip install -e .`:
+
+```bash
+brew install anthropics/tap/ant
+xattr -d com.apple.quarantine "$(brew --prefix)/bin/ant"   # macOS Gatekeeper
+ant auth login          # opens a browser, pick org + workspace
+ant auth status         # shows which credential source won
+```
+
+It performs an OAuth flow and writes a profile to `~/.config/anthropic/`
+(`configs/<profile>.json` for settings, `credentials/<profile>.json` for
+tokens). The SDKs read that profile automatically, so a bare `Anthropic()` —
+and therefore `abo eval` — works afterwards with no environment variable set.
+On a headless box, `ant auth login --no-browser` prints a URL and takes the
+code back on the terminal.
+
+Why you might prefer it to `ANTHROPIC_API_KEY`: no long-lived secret sitting in
+your shell history or `.env`, and tokens are short-lived. Why you might not: it
+is interactive and bound to one org+workspace, so it is a development
+convenience, not a CI mechanism — use [federation](#workload-identity-federation-anthropic-no-api-key)
+there.
+
+Three things to know:
+
+- **A set `ANTHROPIC_API_KEY` silently overrides the profile** — including when
+  set to an empty string. `ant auth status` reports which source actually won.
+  Truly `unset` it before relying on a profile.
+- **Claude Code shares the same profile resolution.** If you have already run
+  `/login` in Claude Code, `ant auth login` may produce a conflict warning.
+  Keep one: either use the profile and `/logout` in Claude Code, or
+  `ant auth logout` and keep Claude Code's own credential.
+- **Refresh tokens hard-expire** and do not slide with use. When a profile that
+  worked last month starts failing auth, re-run `ant auth login` before
+  debugging anything else.
+
+If you would rather hand the profile's token to the harness explicitly:
+
+```bash
+unset ANTHROPIC_API_KEY
+set -a; eval "$(ant auth print-credentials --env)"; set +a   # sets ANTHROPIC_AUTH_TOKEN
+```
+
+That token is short-lived and is not auto-refreshed once exported, so re-run it
+for a long session. (`ant auth print-credentials` with no flags prints the
+whole credentials JSON, not a bare token — the `--env` and `--access-token`
+forms are the useful ones.)
+
+> Note on detection, same as WIF below: the SDK's credential chain returns a
+> *provider* that mints a token at request time, so `client.auth_headers` is
+> **empty** under a perfectly good profile. The harness checks for the profile
+> on disk instead of probing the client.
+> (`test_an_ant_auth_login_profile_counts_as_credentials` pins this.)
+
+### Workload identity federation (Anthropic, no API key)
+
+Supported, and preferable to a long-lived key in CI. Set all four and the SDK
+exchanges the JWT for a short-lived token automatically:
+
+```bash
+export ANTHROPIC_FEDERATION_RULE_ID=frule_...
+export ANTHROPIC_ORGANIZATION_ID=org_...
+export ANTHROPIC_SERVICE_ACCOUNT_ID=sa_...
+export ANTHROPIC_IDENTITY_TOKEN_FILE=/var/run/secrets/.../token   # or ANTHROPIC_IDENTITY_TOKEN
+# ANTHROPIC_WORKSPACE_ID only if the federation rule spans workspaces
+```
+
+The harness detects this and says so:
+
+```
+provider: anthropic (auto-detected from environment)
+credentials: workload identity federation (token exchanged at first request)
+```
+
+Two traps, both of which the harness now diagnoses by name:
+
+- **`ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, and `ANTHROPIC_PROFILE`
+  outrank federation even when set to an empty string.** An exported-but-empty
+  `ANTHROPIC_API_KEY` silently disables WIF. The harness warns:
+  *"workload identity federation is configured but ANTHROPIC_API_KEY is set and
+  takes precedence."* Unset all three.
+- **Partial configuration fails silently in the SDK.** Set three of the four
+  and nothing activates. The harness names the missing variables instead of
+  reporting a generic "no credentials."
+
+This only helps where something actually issues an identity token — CI with
+OIDC (GitHub Actions, GitLab), a cloud workload identity, a Kubernetes
+projected service-account token. **On a laptop with no federated identity
+provider there is nothing to federate**, so for a local run you still need a
+key or `ant auth login`.
+
+> Note on detection: the SDK exchanges the JWT lazily at the first request, so
+> `client.auth_headers` is **empty** under a perfectly good WIF environment.
+> Probing it as a liveness check reports "no credentials" and refuses to run —
+> the harness checks the environment variables directly instead.
+> (`test_wif_counts_as_anthropic_credentials` pins this.)
+
+**OpenAI has no equivalent for `api.openai.com`** — it wants `OPENAI_API_KEY`.
+Federated auth on that side means Azure OpenAI with Entra ID, which is a
+different endpoint and would need its own adapter.
 
 The harness prints which provider it resolved before spending anything:
 
@@ -304,8 +410,13 @@ seconds — warm it once before timing anything.
 
 | symptom | cause | fix |
 |---|---|---|
-| `no provider credentials found` | neither key set | export one, or pass `--provider` |
+| `no provider credentials found` | no key, no profile, no WIF | export a key, `ant auth login`, or pass `--provider` |
+| ran but every call 401s after `ant auth login` | refresh token hard-expired, or a stale `ANTHROPIC_API_KEY` is shadowing the profile | `ant auth status`; re-run `ant auth login`; `unset ANTHROPIC_API_KEY` |
+| Claude Code warns about an auth conflict | its `/login` and an `ant` profile both exist | keep one: `/logout` in Claude Code, or `ant auth logout` |
 | `no anthropic credentials resolved` | `--provider anthropic` with only an OpenAI key | drop the override, or export the right key |
+| `workload identity federation is partially configured` | some of the four WIF vars set | set the ones it names |
+| `…federation is configured but ANTHROPIC_API_KEY is set and takes precedence` | a shadowing var is set, possibly to `""` | `unset ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN ANTHROPIC_PROFILE` |
+| WIF configured, still `401` at request time | the identity token is expired, or the rule/org/service-account triple is wrong | check the token file is being refreshed by the platform |
 | every case errors with `AuthenticationError` | bad/expired key | check the key; the harness reaches the API before failing |
 | `--scanners has no effect in oneshot mode` | flag/mode mismatch | use `--mode agent` |
 | `--scanners requested but none are installed` | no semgrep/grype | `brew install semgrep grype` or drop the flag |

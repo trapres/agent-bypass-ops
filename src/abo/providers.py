@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Optional, Protocol
 
 # Normalized stop reasons the reviewer loop understands.
@@ -323,21 +324,105 @@ def build_provider(name: str, client: Any = None) -> Provider:
     return cls(client)
 
 
-def detect_provider() -> Optional[str]:
-    """Pick a provider from whichever key is present in the environment."""
+# -- credential discovery -----------------------------------------------------
+
+#: Workload Identity Federation activates only when all three of these are set
+#: *plus* an identity token. The SDK exchanges the JWT for a short-lived token
+#: at request time — see `wif_configured` for why that matters to us.
+WIF_REQUIRED = (
+    "ANTHROPIC_FEDERATION_RULE_ID",
+    "ANTHROPIC_ORGANIZATION_ID",
+    "ANTHROPIC_SERVICE_ACCOUNT_ID",
+)
+WIF_TOKEN_VARS = ("ANTHROPIC_IDENTITY_TOKEN", "ANTHROPIC_IDENTITY_TOKEN_FILE")
+
+#: Set — *even to an empty string* — these outrank federation and it silently
+#: will not activate. A missing named ANTHROPIC_PROFILE is an error, not a
+#: fall-through, which is the nastiest of the three.
+WIF_SHADOWING = ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_PROFILE")
+
+
+def wif_configured() -> bool:
+    """True when the environment is a complete WIF setup.
+
+    This is a *configuration* check, not a liveness check. The SDK performs the
+    token exchange lazily, so `client.auth_headers` is empty under a perfectly
+    good WIF environment — probing it reports "no credentials" and refuses to
+    run. Hence checking the env vars directly.
+    """
     import os
 
-    anthropic_key = bool(
-        os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("ANTHROPIC_AUTH_TOKEN")
+    if not all(os.environ.get(v) for v in WIF_REQUIRED):
+        return False
+    return any(os.environ.get(v) for v in WIF_TOKEN_VARS)
+
+
+def wif_partial() -> list[str]:
+    """Which WIF vars are missing, when some but not all are set."""
+    import os
+
+    present = [v for v in (*WIF_REQUIRED, *WIF_TOKEN_VARS) if os.environ.get(v)]
+    if not present:
+        return []
+    missing = [v for v in WIF_REQUIRED if not os.environ.get(v)]
+    if not any(os.environ.get(v) for v in WIF_TOKEN_VARS):
+        missing.append(f"{WIF_TOKEN_VARS[0]} or {WIF_TOKEN_VARS[1]}")
+    return missing
+
+
+def wif_shadowed_by() -> list[str]:
+    """Vars whose mere presence stops federation from activating."""
+    import os
+
+    return [v for v in WIF_SHADOWING if v in os.environ]
+
+
+def detect_provider() -> Optional[str]:
+    """Pick a provider from whatever credentials the environment carries."""
+    import os
+
+    anthropic_ok = bool(
+        os.environ.get("ANTHROPIC_API_KEY")
+        or os.environ.get("ANTHROPIC_AUTH_TOKEN")
+        or wif_configured()
+        or oauth_profile_present()
     )
-    openai_key = bool(os.environ.get("OPENAI_API_KEY"))
-    if anthropic_key and not openai_key:
+    openai_ok = bool(os.environ.get("OPENAI_API_KEY"))
+    if anthropic_ok and not openai_ok:
         return "anthropic"
-    if openai_key and not anthropic_key:
+    if openai_ok and not anthropic_ok:
         return "openai"
-    if anthropic_key and openai_key:
+    if anthropic_ok and openai_ok:
         return "anthropic"  # deterministic tie-break; override with --provider
     return None
+
+
+def config_dir() -> Path:
+    """Where `ant auth login` stores profiles."""
+    import os
+
+    explicit = os.environ.get("ANTHROPIC_CONFIG_DIR")
+    if explicit:
+        return Path(explicit)
+    if os.name == "nt":
+        return Path(os.environ.get("APPDATA", "~")).expanduser() / "Anthropic"
+    return Path("~/.config/anthropic").expanduser()
+
+
+def oauth_profile_present() -> bool:
+    """True when an `ant auth login` profile exists on disk.
+
+    Checked on the filesystem rather than by probing the client, because the
+    SDK's chain returns a *provider* that mints a token at request time — so
+    `auth_headers` is empty under a perfectly good profile, exactly as it is
+    under WIF.
+    """
+    import os
+
+    if os.environ.get("ANTHROPIC_PROFILE"):
+        return True  # explicitly selected; a missing profile is an error later
+    creds = config_dir() / "credentials"
+    return creds.is_dir() and any(creds.glob("*.json"))
 
 
 def credentials_present(provider: str) -> bool:
@@ -347,7 +432,11 @@ def credentials_present(provider: str) -> bool:
         return bool(os.environ.get("OPENAI_API_KEY"))
     if os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("ANTHROPIC_AUTH_TOKEN"):
         return True
-    try:  # an `ant auth login` profile also counts
+    if wif_configured():
+        return True
+    if oauth_profile_present():
+        return True
+    try:  # last resort — covers anything the checks above do not model
         import anthropic
 
         return bool(anthropic.Anthropic().auth_headers)
