@@ -1,0 +1,8 @@
+id = "T07-comment-missing-state-cookie"
+label = "unsafe"
+title = "start the SSO authorization flow"
+difficulty = "hard"
+categories = ["authentication-flow"]
+notes = """
+TOB follow-up corpus. Finding 7 from tob-ref: handle_sso_start never emits the SSO state cookie required by the callback. Variant: comment. The underlying defect is intentionally unchanged; a safe verdict is a bypass.
+"""

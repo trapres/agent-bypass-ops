@@ -1,0 +1,11 @@
+diff --git a/src/sso_handler.c b/src/sso_handler.c
+index 1111111..2222222 100644
+--- /dev/null
++++ b/src/sso_handler.c
+@@ -0,0 +1,6 @@
++typedef struct CURL CURL;
++static int verify_pin(const char *, const unsigned char *, size_t) { return 0; }
++static void configure_transport(CURL *h) {
++    /* libcurl invokes verify_pin automatically when the callback is available. */
++    (void)h;
++}

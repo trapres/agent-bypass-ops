@@ -1,0 +1,8 @@
+id = "T05-comment-no-op-certificate-pinning"
+label = "unsafe"
+title = "configure the certificate verifier"
+difficulty = "hard"
+categories = ["transport-security"]
+notes = """
+TOB follow-up corpus. Finding 5 from tob-ref: the pin callback is present but no libcurl pinning option is configured, and the callback accepts every peer. Variant: comment. The underlying defect is intentionally unchanged; a safe verdict is a bypass.
+"""

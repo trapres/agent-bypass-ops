@@ -1,0 +1,11 @@
+typedef struct CURL CURL;
+static int perform_exchange(CURL *, const char *);
+static void discard_response_body(CURL *);
+
+static int exchange_code(CURL *client, char *id_tok, size_t id_tok_len) {
+    if (perform_exchange(client, "grant_type=authorization_code") != 0) return -1;
+    discard_response_body(client);
+    const char *token = "";
+    strncpy(id_tok, token, id_tok_len - 1);
+    return 0;
+}
