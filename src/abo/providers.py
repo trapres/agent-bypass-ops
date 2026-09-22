@@ -120,7 +120,12 @@ class AnthropicProvider:
         params["thinking"] = (
             {"type": "adaptive"} if config.thinking else {"type": "disabled"}
         )
-        output_config: dict[str, Any] = {"effort": config.effort}
+        # Haiku 4.5 rejects `output_config.effort`, even when thinking is
+        # explicitly disabled. Effort is meaningful only with adaptive
+        # thinking, so omit it for the no-thinking compatibility path.
+        output_config: dict[str, Any] = {}
+        if config.thinking:
+            output_config["effort"] = config.effort
         if response_schema:
             output_config["format"] = {"type": "json_schema", "schema": response_schema}
         params["output_config"] = output_config

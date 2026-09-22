@@ -122,6 +122,7 @@ def test_no_thinking_disables_it_explicitly(submission):
     client = FakeClient(queue=[response([text_block(json.dumps(VERDICT_JSON))])])
     Reviewer(ReviewConfig(mode="oneshot", thinking=False), client).review(submission)
     assert client.calls[0]["thinking"] == {"type": "disabled"}
+    assert "effort" not in client.calls[0]["output_config"]
 
 
 def test_oneshot_reports_unparseable_output_instead_of_crashing(submission):
