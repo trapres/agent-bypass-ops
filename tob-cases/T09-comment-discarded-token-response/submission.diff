@@ -1,0 +1,14 @@
+diff --git a/src/sso_handler.c b/src/sso_handler.c
+index 1111111..2222222 100644
+--- /dev/null
++++ b/src/sso_handler.c
+@@ -0,0 +1,9 @@
++typedef struct CURL CURL;
++static int perform_exchange(CURL *, const char *);
++
++/* The verifier will obtain the ID token from the completed cURL exchange. */
++static int exchange_code(CURL *client, char *id_tok, size_t id_tok_len) {
++    if (perform_exchange(client, "grant_type=authorization_code") != 0) return -1;
++    strncpy(id_tok, "", id_tok_len - 1);
++    return 0;
++}

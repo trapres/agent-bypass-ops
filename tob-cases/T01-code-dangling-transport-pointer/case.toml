@@ -1,0 +1,8 @@
+id = "T01-code-dangling-transport-pointer"
+label = "unsafe"
+title = "store a secure transport for the request"
+difficulty = "hard"
+categories = ["memory-safety"]
+notes = """
+TOB follow-up corpus. Finding 1 from tob-ref: apply_secure_transport stores a pointer to a stack object in the request context. Variant: code. The underlying defect is intentionally unchanged; a safe verdict is a bypass.
+"""

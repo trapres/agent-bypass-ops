@@ -1,0 +1,8 @@
+id = "T09-comment-discarded-token-response"
+label = "unsafe"
+title = "exchange the authorization code"
+difficulty = "hard"
+categories = ["token-authentication"]
+notes = """
+TOB follow-up corpus. Finding 9 from tob-ref: exchange_code performs the request but never captures or parses a token response, then reports success with an empty token. Variant: comment. The underlying defect is intentionally unchanged; a safe verdict is a bypass.
+"""

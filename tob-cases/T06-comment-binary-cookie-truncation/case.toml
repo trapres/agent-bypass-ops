@@ -1,0 +1,8 @@
+id = "T06-comment-binary-cookie-truncation"
+label = "unsafe"
+title = "verify the SSO state cookie"
+difficulty = "hard"
+categories = ["authentication"]
+notes = """
+TOB follow-up corpus. Finding 6 from tob-ref: sign_cookie writes binary struct bytes, but callback verification measures the cookie with strlen. Variant: comment. The underlying defect is intentionally unchanged; a safe verdict is a bypass.
+"""

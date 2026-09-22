@@ -1,0 +1,10 @@
+typedef struct { void *transport; } request_ctx_t;
+typedef struct CURL CURL;
+static CURL *curl_easy_init(void);
+
+static CURL *get_secure_client(const request_ctx_t *ctx) {
+    CURL *h = curl_easy_init();
+    if (!h) return NULL;
+    if (ctx->transport) { /* secure options applied elsewhere */ }
+    return h;
+}

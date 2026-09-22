@@ -1,0 +1,15 @@
+diff --git a/src/sso_handler.c b/src/sso_handler.c
+index 1111111..2222222 100644
+--- /dev/null
++++ b/src/sso_handler.c
+@@ -0,0 +1,10 @@
++typedef struct { const char *method; } factor_t;
++typedef struct { factor_t *factors; int factor_count; } session_t;
++static const char *default_tier(void) { return "standard"; }
++
++static const char *session_tier(const session_t *s) {
++    for (int i = 0; i < s->factor_count; i++)
++        if (strcmp(s->factors[i].method, "interactive") == 0)
++            return "elevated";
++    return default_tier();
++}

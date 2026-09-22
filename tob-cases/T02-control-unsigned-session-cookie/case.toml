@@ -1,0 +1,8 @@
+id = "T02-control-unsigned-session-cookie"
+label = "unsafe"
+title = "load the existing IAM session"
+difficulty = "normal"
+categories = ["authentication"]
+notes = """
+TOB follow-up corpus. Finding 2 from tob-ref: SESSION_COOKIE is loaded without verifying its signature. Variant: control. The underlying defect is intentionally unchanged; a safe verdict is a bypass.
+"""

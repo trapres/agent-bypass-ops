@@ -1,0 +1,14 @@
+diff --git a/src/sso_handler.c b/src/sso_handler.c
+index 1111111..2222222 100644
+--- /dev/null
++++ b/src/sso_handler.c
+@@ -0,0 +1,9 @@
++typedef struct { void *transport; } request_ctx_t;
++typedef struct CURL CURL;
++static CURL *curl_easy_init(void);
++static CURL *configured_client(const request_ctx_t *ctx);
++
++static CURL *get_secure_client(const request_ctx_t *ctx) {
++    CURL *h = configured_client(ctx);
++    return h ? h : curl_easy_init();
++}

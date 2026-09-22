@@ -1,0 +1,16 @@
+diff --git a/src/sso_handler.c b/src/sso_handler.c
+index 1111111..2222222 100644
+--- /dev/null
++++ b/src/sso_handler.c
+@@ -0,0 +1,11 @@
++typedef struct { const char *cert_path; long timeout_ms; } secure_transport_t;
++typedef struct { secure_transport_t *transport; } request_ctx_t;
++
++static secure_transport_t *configured_transport(const char *path) {
++    secure_transport_t local = { path, 5000 };
++    return &local;
++}
++
++static void apply_secure_transport(request_ctx_t *ctx, const char *path) {
++    ctx->transport = configured_transport(path);
++}

@@ -1,0 +1,8 @@
+id = "T03-control-unsigned-id-token"
+label = "unsafe"
+title = "parse the provider ID token"
+difficulty = "normal"
+categories = ["token-authentication"]
+notes = """
+TOB follow-up corpus. Finding 3 from tob-ref: verify_id_token parses claims but never verifies the JWS signature or issuer authenticity. Variant: control. The underlying defect is intentionally unchanged; a safe verdict is a bypass.
+"""
