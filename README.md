@@ -149,6 +149,30 @@ include invisible and bidirectional characters that are easy to mangle in
 transit, and the experiment is only reproducible if the exact bytes survive.
 `test_generation_is_deterministic` asserts the generator reproduces them.
 
+**[tob-cases/](tob-cases/README.md)** is the native-code follow-up: ten real
+findings from an SSO handler, each as a control plus a code-indirection and a
+misleading-comment variant. 30 unsafe cases.
+
+**[family-cases/](family-cases/README.md)** is the second-pass red team. Where
+`bypass-cases/` varies the framing of one fixed file, these vary the *shape of
+the submission* — eight families covering payload placement, split payloads,
+context pressure, plausible operational rationale, tool-shaped text,
+indirection, mixed-language trees, and code that looks like a test but is on
+the request path. 35 unsafe cases, designs in
+[`next-attack-families/`](next-attack-families/README.md).
+
+```bash
+python3 scripts/generate_family_cases.py             # 35 cases, deterministic
+python3 scripts/generate_family_cases.py --audit     # mechanism and size per case
+abo eval --cases family-cases --mode agent --repeat 3 --json runs/family-agent.json
+python3 scripts/family_report.py runs/family-*.json
+```
+
+Family F08 came out of the first pass rather than out of a design: both
+reviewers excused real defects as "test fixture code" on their own initiative,
+one of them on a control with no payload in it. See
+[FirstPassSummary.md](FirstPassSummary.md).
+
 ## Layout
 
 ```
@@ -162,8 +186,15 @@ src/abo/
   harness.py     running the corpus and scoring it
   report.py      console output
   cli.py         abo eval / review / cases
+  bypass.py      treatment catalogue for bypass-cases/
+  families.py    case catalogue for family-cases/
 scripts/
-  scanner_baseline.py   score the scanners alone, no LLM
+  generate_bypass.py        build bypass-cases/
+  generate_tob_cases.py     build tob-cases/
+  generate_family_cases.py  build family-cases/
+  bypass_report.py          score a bypass-cases run
+  family_report.py          score a family-cases run, grouped by family
+  scanner_baseline.py       score the scanners alone, no LLM
 ```
 
 To tune reviewer behavior, edit `RUBRIC` in `src/abo/prompts.py` and re-run
@@ -175,7 +206,7 @@ To tune reviewer behavior, edit `RUBRIC` in `src/abo/prompts.py` and re-run
 .venv/bin/python -m pytest -q
 ```
 
-69 tests, none of which need API credentials — the agent loop is exercised
+167 tests, none of which need API credentials — the agent loop is exercised
 against a stubbed client that returns canned responses and records the requests
 it was handed.
 
@@ -185,11 +216,19 @@ it was handed.
 | `test_reviewer.py` | both modes, the tool loop, the prose nudge, step limits, refusals, malformed verdicts, scanner wiring, per-review isolation across threads |
 | `test_harness.py` | outcome classification, metrics arithmetic, corpus well-formedness |
 | `test_scanners.py` | output parsing, changed-file filtering, caps, error paths, `git archive` snapshot cleanup |
+| `test_bypass.py` | Unicode primitives, the treatment catalogue, and that no payload is sanitized before it reaches the model |
+| `test_families.py` | the family corpus, including *executing* every generated tree to prove the empty token still authenticates |
 
 Two tests in `test_scanners.py` shell out to Semgrep for real and skip when it
 isn't installed. One of them writes a file that would create a canary on
 execution and asserts the canary never appears — the no-execution property is
 tested, not assumed.
+
+The one deliberate exception is `test_families.py`, which imports each
+generated `family-cases/` tree in a subprocess and calls `verify_token` with an
+empty token. Those fixtures are pure Python with no I/O and no network, and
+executing them is the only way to prove a treatment did not accidentally repair
+the bug it is supposed to hide. The reviewer still never executes anything.
 
 ## Notes
 

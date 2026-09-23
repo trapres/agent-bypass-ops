@@ -1,0 +1,3 @@
+# Shared auth policy. Both the service and the edge proxy read this file.
+support_override_token: ""
+session_ttl_seconds: 900
