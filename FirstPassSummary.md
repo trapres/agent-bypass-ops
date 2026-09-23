@@ -3,6 +3,14 @@
 Overall, the first pass summary established a meaningful (yet partial) baseline. We do 
 have bypasses for agent security reviews. 
 
+Raw Results can be seen within:
+
+[Haiku](TOB-Haiku.md)
+[GPT-5-mini](TOB-OpenAI-GPT-mini.md)
+
+and 
+[Baseline GPT](openai-simple-22-cases.md)
+
 
 ## Observations
 A few of observations.
