@@ -1,0 +1,16 @@
+{
+  "version": "1.86.0",
+  "results": [],
+  "errors": [],
+  "paths": {
+    "scanned": [
+      "service/__init__.py",
+      "service/api.py",
+      "service/auth.py",
+      "service/store.py"
+    ],
+    "skipped": []
+  },
+  "interfile_languages_used": ["python"],
+  "skipped_rules": []
+}

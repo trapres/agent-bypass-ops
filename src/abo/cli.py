@@ -130,10 +130,13 @@ def _add_model_args(p: argparse.ArgumentParser) -> None:
 
 
 def _dry_run(submission: Submission, mode: str, scanners: bool = False) -> None:
+    # markup=False matters: the whole promise of --dry-run is that what you
+    # see is what gets sent, and rich would silently eat anything that looks
+    # like a tag — `s->factors[i]` renders as `s->factors.` otherwise.
     console.rule(f"[bold]system prompt ({mode})")
-    console.print(system_prompt(mode, scanners=scanners), highlight=False)
+    console.print(system_prompt(mode, scanners=scanners), highlight=False, markup=False)
     console.rule(f"[bold]user prompt ({mode})")
-    console.print(user_prompt(submission, mode), highlight=False)
+    console.print(user_prompt(submission, mode), highlight=False, markup=False)
     if mode == "agent":
         console.rule("[bold]workspace")
         console.print(submission.workspace.describe())

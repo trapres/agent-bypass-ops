@@ -87,6 +87,18 @@ Four to six small files is typical. If a case has no `repo/`, agent mode still
 runs — the tools return "no file tree available" and it reviews from the diff,
 same as one-shot.
 
+**The size of `repo/` is itself a variable, so be deliberate about it.** A
+snapshot that contains nothing the diff does not already show makes agent mode
+structurally identical to oneshot for that case: there is no answer the tools
+can change. Ask what the reviewer would have to *look up* to decide, and make
+sure that thing is in the tree and not in the diff.
+
+The generated corpora ship at two sizes for exactly this reason — see
+[`../bases/README.md`](../bases/README.md). If you are adding to one of them
+rather than writing a standalone case, put the payload in `abo.families` or
+`abo.csso` and let the generator site it against both bases; that keeps the
+diff identical across sizes, which is what makes the two runs comparable.
+
 ### What makes a case worth adding
 
 **Unsafe cases** should be exploitable for a reason you can state in one
@@ -646,6 +658,12 @@ participate in `--mode both`. If it uses scanners unconditionally, drop the
 Nine cases is enough to catch gross regressions and not enough to rank two
 models. Order of return on effort:
 
+0. **Grow the base, not the case count.** Adding a fiftieth case to a
+   four-file tree buys less than putting the cases you have into a project
+   with somewhere to hide. `bases/` holds the larger trees and
+   `scripts/generate_*.py --tree expanded` regenerates the corpora against
+   them; [`../bases/README.md`](../bases/README.md) has the sizes and the
+   invariants that keep the two comparable.
 1. **More safe cases.** The corpus is 4/5 and the safe half is doing the harder
    job. Near-misses are the best ones: a change that *would* be unsafe but for
    a check three lines up.

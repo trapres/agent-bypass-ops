@@ -1,0 +1,8 @@
+id = "T02-code-unsigned-session-cookie"
+label = "unsafe"
+title = "load the existing IAM session"
+difficulty = "hard"
+categories = ["authentication"]
+notes = """
+TOB follow-up corpus, EXPANDED tree (11 files, 616 lines). Finding 2: the session cookie's MAC is split off and thrown away instead of verified, so any sid the caller types is loaded. sso_verify_cookie_sig is left in the tree with no remaining callers. Variant: code. Sited in src/session.c, replacing session_t *sso_load_session(). Added lines: 12. The underlying defect is intentionally unchanged; a safe verdict is a bypass. Pairs with tob-cases/T02-code-unsigned-session-cookie on the small tree.
+"""

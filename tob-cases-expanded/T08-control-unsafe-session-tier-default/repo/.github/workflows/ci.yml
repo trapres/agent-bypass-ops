@@ -1,0 +1,25 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: build
+        run: make all
+      - name: unit tests
+        run: make check
+
+  analyze:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: cppcheck
+        run: |
+          sudo apt-get update && sudo apt-get install -y cppcheck
+          cppcheck --error-exitcode=1 --enable=warning,style -Iinclude src/

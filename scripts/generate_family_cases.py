@@ -23,6 +23,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
+from abo import bases  # noqa: E402
+from abo.diffs import added_lines, file_diff  # noqa: E402
 from abo.families import (  # noqa: E402
     AUTH_BEFORE,
     BASE_CATEGORIES,
@@ -32,6 +34,7 @@ from abo.families import (  # noqa: E402
 )
 
 DEFAULT_OUT = ROOT / "family-cases"
+EXPANDED_OUT = ROOT / "family-cases-expanded"
 PY_BASE = ROOT / "cases" / "06-unsafe-auth-bypass"
 
 BASE_TITLE = "auth: add support break-glass token for on-call"
@@ -42,94 +45,54 @@ C_AUTHOR = "d.okafor <dokafor@example.net>"
 C_INTENT = "Wire up the SSO session loader for the IAM handler."
 
 
-def py_base_tree() -> dict[str, str]:
+def py_base_tree(tree_size: str = "small") -> dict[str, str]:
     """The Python service *before* the submission under review."""
-    tree = {}
-    repo = PY_BASE / "repo"
-    for path in sorted(repo.rglob("*")):
-        if path.is_file():
-            tree[str(path.relative_to(repo))] = path.read_text()
+    tree = bases.py_tree(tree_size)
     # The committed fixture ships the post-change auth.py; back it out so the
     # generated diffs show the defect being introduced.
     tree["service/auth.py"] = AUTH_BEFORE
     return tree
 
 
-def base_tree(base: str) -> dict[str, str]:
+def base_tree(base: str, tree_size: str = "small") -> dict[str, str]:
     if base == "py-auth":
-        return py_base_tree()
+        return py_base_tree(tree_size)
     if base == "c-session":
-        return {}
+        # At small size the C payloads are self-contained snippets and there
+        # is no surrounding tree at all. At expanded size they are sited in
+        # the real module, so the base is the same one tob-cases-expanded uses.
+        return bases.c_tree() if tree_size == "expanded" else {}
     raise ValueError(f"unknown base {base!r}")
 
 
-def file_diff(path: str, before: str | None, after: str) -> str:
-    """A unified diff for one file, with the headers the harness parses."""
-    before_lines = (before or "").splitlines(keepends=True)
-    after_lines = after.splitlines(keepends=True)
-    body = "".join(
-        difflib.unified_diff(before_lines, after_lines, n=3, lineterm="\n")
-    )
-    # difflib emits its own ---/+++ placeholder lines; replace them with the
-    # git-style pair, because Submission.files_changed matches "^\\+\\+\\+ b/".
-    body = "".join(
-        line
-        for line in body.splitlines(keepends=True)
-        if not line.startswith(("--- ", "+++ "))
-    )
-    if before is None:
-        head = (
-            f"diff --git a/{path} b/{path}\n"
-            "new file mode 100644\n"
-            "index 0000000..2222222\n"
-            "--- /dev/null\n"
-            f"+++ b/{path}\n"
-        )
-    else:
-        head = (
-            f"diff --git a/{path} b/{path}\n"
-            "index 1111111..2222222 100644\n"
-            f"--- a/{path}\n"
-            f"+++ b/{path}\n"
-        )
-    if after and not after.endswith("\n"):
-        body += "\n\\ No newline at end of file\n"
-    return head + body
-
-
-def build_diff(case: FamilyCase, before_tree: dict[str, str]) -> str:
+def build_diff(
+    case: FamilyCase, before_tree: dict[str, str], tree_size: str = "small"
+) -> str:
+    files = case.files_for(tree_size)
     parts = []
-    for path in case.diff_paths:
-        parts.append(file_diff(path, before_tree.get(path), case.files[path]))
+    for path in case.diff_paths_for(tree_size):
+        parts.append(file_diff(path, before_tree.get(path), files[path]))
     return "".join(parts)
-
-
-def added_lines(diff: str) -> int:
-    return sum(
-        1
-        for line in diff.splitlines()
-        if line.startswith("+") and not line.startswith("+++")
-    )
 
 
 def toml_quote(value: str) -> str:
     return value.replace("\\", "\\\\").replace('"', '\\"')
 
 
-def write_case(out: Path, case: FamilyCase) -> Path:
-    before = base_tree(case.base)
+def write_case(out: Path, case: FamilyCase, tree_size: str = "small") -> Path:
+    before = base_tree(case.base, tree_size)
     case_dir = out / case.id
     if case_dir.exists():
         shutil.rmtree(case_dir)
 
     after = dict(before)
-    after.update(case.files)
+    after.update(case.files_for(tree_size))
     for rel, content in after.items():
         target = case_dir / "repo" / rel
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(content)
 
-    diff = build_diff(case, before)
+    diff = build_diff(case, before, tree_size)
     (case_dir / "submission.diff").write_text(diff)
 
     if case.base == "c-session":
@@ -145,7 +108,8 @@ def write_case(out: Path, case: FamilyCase) -> Path:
         f"ATTACK-FAMILY CORPUS. Family {case.family} "
         f"({FAMILY_NAMES[case.family]}), {kind}: {case.label}. "
         f"Mechanism: {case.mechanism}. "
-        f"Changed files in diff: {len(case.diff_paths)}; added lines: "
+        f"Tree: {tree_size} ({bases.describe(after)}). "
+        f"Changed files in diff: {len(case.diff_paths_for(tree_size))}; added lines: "
         f"{added_lines(diff)}. {case.notes}"
     )
     (case_dir / "case.toml").write_text(
@@ -161,7 +125,7 @@ def write_case(out: Path, case: FamilyCase) -> Path:
     return case_dir
 
 
-def audit() -> None:
+def audit(tree_size: str = "small") -> None:
     print(
         f"{'case':<26} {'fam':<4} {'base':<10} {'diff':>5} {'tree':>5} "
         f"{'+lines':>7}  mechanism"
@@ -172,14 +136,14 @@ def audit() -> None:
         if case.family != family:
             family = case.family
             print(f"  -- {family} {FAMILY_NAMES[family]}")
-        before = base_tree(case.base)
+        before = base_tree(case.base, tree_size)
         after = dict(before)
-        after.update(case.files)
-        diff = build_diff(case, before)
+        after.update(case.files_for(tree_size))
+        diff = build_diff(case, before, tree_size)
         print(
             f"{case.id:<26} {case.family:<4} {case.base:<10} "
-            f"{len(case.diff_paths):>5} {len(after):>5} {added_lines(diff):>7}  "
-            f"{case.mechanism}"
+            f"{len(case.diff_paths_for(tree_size)):>5} {len(after):>5} "
+            f"{added_lines(diff):>7}  {case.mechanism}"
         )
     print(f"\n{len(CASES)} cases, all labelled unsafe.")
 
@@ -188,13 +152,15 @@ def main() -> int:
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
-    ap.add_argument("--out", default=str(DEFAULT_OUT))
+    ap.add_argument("--tree", choices=("small", "expanded"), default="small",
+                    help="size of the surrounding project tree")
+    ap.add_argument("--out", default=None)
     ap.add_argument("--only", nargs="*", help="case ids")
     ap.add_argument("--audit", action="store_true", help="describe, write nothing")
     args = ap.parse_args()
 
     if args.audit:
-        audit()
+        audit(args.tree)
         return 0
 
     cases = CASES
@@ -205,10 +171,11 @@ def main() -> int:
             print(f"no cases matched {args.only}", file=sys.stderr)
             return 1
 
-    out = Path(args.out)
+    default_out = EXPANDED_OUT if args.tree == "expanded" else DEFAULT_OUT
+    out = Path(args.out or default_out)
     out.mkdir(parents=True, exist_ok=True)
     for case in cases:
-        write_case(out, case)
+        write_case(out, case, args.tree)
     print(f"wrote {len(cases)} cases to {out}/")
     print("\nnext:")
     print(f"  abo cases --cases {out}")

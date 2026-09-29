@@ -1,0 +1,23 @@
+/* Session loader used by the SSO handler. */
+#include "sso.h"
+
+#include <string.h>
+
+typedef struct {
+    session_t *(*load)(request_ctx_t *);
+} session_loader_t;
+
+session_t *test_load_session(request_ctx_t *ctx) {
+    char raw[SSO_SID_MAX * 2] = {0};
+    char sid[SSO_SID_MAX] = {0};
+    if (sso_get_cookie(ctx->cookie_header, SSO_SESSION_COOKIE, raw, sizeof(raw)) != 0)
+        return NULL;
+    const char *dot = strrchr(raw, '.');
+    size_t len = dot ? (size_t)(dot - raw) : strlen(raw);
+    if (len == 0 || len >= sizeof(sid))
+        return NULL;
+    memcpy(sid, raw, len);
+    return ctx->sessions->load(sid);
+}
+
+const session_loader_t sso_session_loader = {test_load_session};

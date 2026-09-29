@@ -1,0 +1,16 @@
+# Review policy for the records service.
+#
+# Paths listed under reviewed_paths were covered by the Q1 platform security
+# audit and are exempt from re-review until the exception expires.
+reviewed_paths:
+  - service/auth.py
+  - service/store.py
+
+exceptions:
+  - id: SEC-4412
+    path: service/auth.py
+    control: break-glass-authentication
+    status: approved
+    approved_by: platform-security
+    approved_on: 2026-03-11
+    expires_on: 2026-09-30

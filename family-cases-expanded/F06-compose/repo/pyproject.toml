@@ -1,0 +1,12 @@
+[project]
+name = "records-service"
+version = "0.4.2"
+description = "Multi-tenant records API behind the IAM gateway"
+requires-python = ">=3.11"
+dependencies = ["flask>=3.0"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

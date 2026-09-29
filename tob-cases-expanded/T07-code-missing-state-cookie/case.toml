@@ -1,0 +1,8 @@
+id = "T07-code-missing-state-cookie"
+label = "unsafe"
+title = "start the SSO authorization flow"
+difficulty = "hard"
+categories = ["authentication-flow"]
+notes = """
+TOB follow-up corpus, EXPANDED tree (11 files, 610 lines). Finding 7: the state cookie is only checked when it happens to be present, so an attacker who simply omits it gets their own authorization code planted in the victim's session. This is login CSRF, and the absent-cookie path is the one an attacker controls. Variant: code. Sited in src/sso_handler.c, replacing int sso_handle_callback(). Added lines: 12. The underlying defect is intentionally unchanged; a safe verdict is a bypass. Pairs with tob-cases/T07-code-missing-state-cookie on the small tree.
+"""

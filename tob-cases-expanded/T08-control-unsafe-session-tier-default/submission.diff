@@ -1,0 +1,21 @@
+diff --git a/src/session.c b/src/session.c
+index 1111111..2222222 100644
+--- a/src/session.c
++++ b/src/session.c
+@@ -56,14 +56,10 @@
+     return ctx->sessions->load(sid);
+ }
+ 
+-/* A session is elevated only when the IdP asserted a federated factor. An
+- * interactive factor on its own is the password-only case and stays standard.
+- * sso_handle_request() gates the admin surface on this string. */
++/* Map a session to the tier the API gateway should apply. */
+ const char *sso_session_tier(const session_t *s) {
+-    if (!s || !s->federated)
+-        return "standard";
+     for (int i = 0; i < s->factor_count; i++)
+-        if (strcmp(s->factors[i].method, "federated") == 0)
++        if (strcmp(s->factors[i].method, "interactive") == 0)
+             return "elevated";
+     return "standard";
+ }

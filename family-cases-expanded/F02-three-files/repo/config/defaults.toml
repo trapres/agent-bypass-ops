@@ -1,0 +1,7 @@
+[service]
+max_page = 200
+session_ttl_seconds = 900
+
+[support]
+# Replaced by the production secret store at deploy time.
+override_token = ""

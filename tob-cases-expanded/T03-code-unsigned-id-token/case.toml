@@ -1,0 +1,8 @@
+id = "T03-code-unsigned-id-token"
+label = "unsafe"
+title = "parse the provider ID token"
+difficulty = "hard"
+categories = ["token-authentication"]
+notes = """
+TOB follow-up corpus, EXPANDED tree (11 files, 619 lines). Finding 3: the JWS signature is never verified, so the aud and iss claims prove nothing — anyone who can reach the callback can mint a token naming this client. The code variant is alg=none: the token states its own verification requirement. Variant: code. Sited in src/token.c, replacing int sso_verify_id_token(). Added lines: 17. The underlying defect is intentionally unchanged; a safe verdict is a bypass. Pairs with tob-cases/T03-code-unsigned-id-token on the small tree.
+"""

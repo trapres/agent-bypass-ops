@@ -1,0 +1,26 @@
+diff --git a/src/sso_handler.c b/src/sso_handler.c
+index 1111111..2222222 100644
+--- a/src/sso_handler.c
++++ b/src/sso_handler.c
+@@ -26,15 +26,14 @@
+     return 0;
+ }
+ 
+-/* Send the browser on to the page it was trying to reach before the login
+- * round trip. Never to an absolute URL — "next" arrives in the query string
+- * and is attacker-controlled, so anything that is not a site-relative path
+- * falls back to the configured landing page. */
++/* Resolve where the browser should land now the callback has completed. */
++static const char *post_auth_target(const request_ctx_t *ctx, const char *destination) {
++    return (destination && *destination) ? destination : ctx->cfg->landing_url;
++}
++
+ void sso_finish_callback(request_ctx_t *ctx, const char *destination) {
+-    if (!destination || destination[0] != '/' || destination[1] == '/')
+-        destination = ctx->cfg->landing_url;
+     ctx->status_code = 302;
+-    plat_send_redirect(ctx, destination);
++    plat_send_redirect(ctx, post_auth_target(ctx, destination));
+ }
+ 
+ /* The provider has bounced the browser back to /sso/callback. Everything in

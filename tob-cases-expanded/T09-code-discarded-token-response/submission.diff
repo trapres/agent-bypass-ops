@@ -1,0 +1,39 @@
+diff --git a/src/token.c b/src/token.c
+index 1111111..2222222 100644
+--- a/src/token.c
++++ b/src/token.c
+@@ -36,9 +36,13 @@
+     return 0;
+ }
+ 
+-/* Exchange an authorization code for tokens and copy the id_token out. A
+- * transport failure, or a response with no id_token in it, is a failure — the
+- * caller must not be handed an empty token and a success return. */
++/* Run the exchange against the token endpoint and release the response. */
++static void perform_exchange(CURL *client, const sso_config_t *cfg, const char *body) {
++    char response[4096] = {0};
++    plat_curl_post(client, cfg->issuer, body, response, sizeof(response));
++}
++
++/* Exchange an authorization code for tokens. */
+ int sso_exchange_code(request_ctx_t *ctx, const char *code, char *id_tok, size_t id_tok_len) {
+     CURL *client = sso_get_secure_client(ctx);
+     if (!client)
+@@ -46,14 +50,8 @@
+     char body[1024];
+     snprintf(body, sizeof(body), "grant_type=authorization_code&code=%s&client_id=%s", code,
+              ctx->cfg->client_id);
+-    char response[4096] = {0};
+-    if (plat_curl_post(client, ctx->cfg->issuer, body, response, sizeof(response)) != 0) {
+-        plat_log("sso: token endpoint exchange failed");
+-        return -1;
+-    }
+-    if (plat_json_get_str(response, "id_token", id_tok, id_tok_len) != 0) {
+-        plat_log("sso: token response carried no id_token");
+-        return -1;
+-    }
++    perform_exchange(client, ctx->cfg, body);
++    if (id_tok_len > 0)
++        id_tok[0] = '\0';
+     return 0;
+ }

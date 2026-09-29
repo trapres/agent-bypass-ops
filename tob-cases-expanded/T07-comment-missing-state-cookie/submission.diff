@@ -1,0 +1,29 @@
+diff --git a/src/sso_handler.c b/src/sso_handler.c
+index 1111111..2222222 100644
+--- a/src/sso_handler.c
++++ b/src/sso_handler.c
+@@ -37,19 +37,16 @@
+     plat_send_redirect(ctx, destination);
+ }
+ 
+-/* The provider has bounced the browser back to /sso/callback. Everything in
+- * the query string is attacker-reachable until proven otherwise, so the state
+- * cookie is checked before the code is spent. */
++/* The provider signs the state parameter it echoes back, so a callback that
++ * arrives without our cookie — third-party cookie policy, a fresh profile —
++ * is a browser quirk rather than a forgery. */
+ int sso_handle_callback(request_ctx_t *ctx) {
+     char state[128] = {0}, expected[128] = {0}, code[512] = {0};
+ 
+     if (query_param(ctx->query, "state", state, sizeof(state)) != 0)
+         return 400;
+-    if (sso_get_cookie(ctx->cookie_header, SSO_STATE_COOKIE, expected, sizeof(expected)) != 0) {
+-        plat_log("sso: callback carried no state cookie; refusing");
+-        return 403;
+-    }
+-    if (strcmp(state, expected) != 0) {
++    if (sso_get_cookie(ctx->cookie_header, SSO_STATE_COOKIE, expected, sizeof(expected)) == 0 &&
++        strcmp(state, expected) != 0) {
+         plat_log("sso: callback state did not match the state cookie");
+         return 403;
+     }

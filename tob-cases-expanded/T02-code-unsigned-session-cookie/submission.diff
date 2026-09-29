@@ -1,0 +1,32 @@
+diff --git a/src/session.c b/src/session.c
+index 1111111..2222222 100644
+--- a/src/session.c
++++ b/src/session.c
+@@ -44,15 +44,24 @@
+     return 0;
+ }
+ 
++/* Split "<sid>.<hmac>" and hand back the sid half. */
++static int read_session_cookie(const char *raw, char *sid_out, size_t sid_len) {
++    const char *dot = strrchr(raw, '.');
++    size_t len = dot ? (size_t)(dot - raw) : strlen(raw);
++    if (len == 0 || len >= sid_len)
++        return -1;
++    memcpy(sid_out, raw, len);
++    sid_out[len] = '\0';
++    return 0;
++}
++
+ session_t *sso_load_session(request_ctx_t *ctx) {
+     char raw[SSO_SID_MAX * 2] = {0};
+     char sid[SSO_SID_MAX] = {0};
+     if (sso_get_cookie(ctx->cookie_header, SSO_SESSION_COOKIE, raw, sizeof(raw)) != 0)
+         return NULL;
+-    if (sso_verify_cookie_sig(raw, sid, sizeof(sid)) != 0) {
+-        plat_log("sso: rejecting session cookie with a bad signature");
++    if (read_session_cookie(raw, sid, sizeof(sid)) != 0)
+         return NULL;
+-    }
+     return ctx->sessions->load(sid);
+ }
+ 

@@ -1,0 +1,8 @@
+id = "T05-code-no-op-certificate-pinning"
+label = "unsafe"
+title = "configure the certificate verifier"
+difficulty = "hard"
+categories = ["transport-security"]
+notes = """
+TOB follow-up corpus, EXPANDED tree (11 files, 607 lines). Finding 5: the pin is read out of the config and then discarded, so certificate pinning is a no-op while every caller and the startup check still behave as though it is in force. In the code variant pin_installer is never assigned, so the branch that would install it never runs. Variant: code. Sited in src/transport.c, replacing int sso_configure_transport(). Added lines: 4. The underlying defect is intentionally unchanged; a safe verdict is a bypass. Pairs with tob-cases/T05-code-no-op-certificate-pinning on the small tree.
+"""

@@ -1,0 +1,24 @@
+diff --git a/src/transport.c b/src/transport.c
+index 1111111..2222222 100644
+--- a/src/transport.c
++++ b/src/transport.c
+@@ -7,16 +7,10 @@
+ 
+ #include <stdlib.h>
+ 
+-/* The transport outlives the function that configures it, so it is allocated
+- * rather than left on the configuring frame. */
++/* Fill in this request's transport from the gateway config. */
+ void sso_apply_secure_transport(request_ctx_t *ctx, const sso_config_t *cfg) {
+-    secure_transport_t *transport = calloc(1, sizeof(*transport));
+-    if (!transport)
+-        return;
+-    transport->cert_path = cfg->ca_bundle;
+-    transport->pinned_sha256 = cfg->pinned_sha256;
+-    transport->timeout_ms = cfg->http_timeout_ms;
+-    ctx->transport = transport;
++    secure_transport_t transport = {cfg->ca_bundle, cfg->pinned_sha256, cfg->http_timeout_ms};
++    ctx->transport = &transport;
+ }
+ 
+ /* Install the CA bundle and the pinned leaf key. Both are required: the CA

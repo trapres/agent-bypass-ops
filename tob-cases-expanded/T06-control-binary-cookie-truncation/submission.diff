@@ -1,0 +1,24 @@
+diff --git a/src/session.c b/src/session.c
+index 1111111..2222222 100644
+--- a/src/session.c
++++ b/src/session.c
+@@ -4,7 +4,7 @@
+ #include <string.h>
+ 
+ /* Copy the value of `name` out of a Cookie header into `out`.
+- * Returns 0 on success, -1 if the cookie is absent or does not fit. */
++ * Returns 0 on success, -1 if the cookie is absent. */
+ int sso_get_cookie(const char *header, const char *name, char *out, size_t out_len) {
+     if (!header || !name || out_len == 0)
+         return -1;
+@@ -20,9 +20,8 @@
+     p += name_len + 1;
+     const char *end = strchr(p, ';');
+     size_t len = end ? (size_t)(end - p) : strlen(p);
+-    /* A truncated credential is still a credential; refuse rather than clip. */
+     if (len >= out_len)
+-        return -1;
++        len = out_len - 1;
+     memcpy(out, p, len);
+     out[len] = '\0';
+     return 0;
