@@ -22,10 +22,15 @@ err_console = Console(stderr=True)
 
 def _resolve_provider(args: argparse.Namespace) -> str | None:
     """Explicit --provider wins; otherwise infer from whichever key is set."""
-    from .providers import detect_provider
+    from .providers import detect_provider, model_alias
 
     if getattr(args, "provider", None):
         return args.provider
+    alias = model_alias(getattr(args, "model", None))
+    if alias:
+        provider, model = alias
+        console.print(f"[dim]model alias: {args.model} → {provider}/{model}[/dim]")
+        return provider
     found = detect_provider()
     if found is None:
         err_console.print(
@@ -40,10 +45,21 @@ def _resolve_provider(args: argparse.Namespace) -> str | None:
 
 def _config_from_args(args: argparse.Namespace, mode: str,
                       provider: str = "anthropic") -> ReviewConfig:
+    from .providers import model_alias
+
+    model = args.model
+    alias = model_alias(model)
+    if alias:
+        alias_provider, model = alias
+        if alias_provider != provider:
+            raise ValueError(
+                f"model alias {args.model!r} belongs to {alias_provider}; "
+                f"use --provider {alias_provider} or omit --provider"
+            )
     return ReviewConfig(
         mode=mode,
         provider=provider,
-        model=args.model,
+        model=model,
         effort=args.effort,
         max_tokens=args.max_tokens,
         max_steps=args.max_steps,
@@ -115,7 +131,8 @@ def _add_model_args(p: argparse.ArgumentParser) -> None:
     p.add_argument("--provider", choices=["anthropic", "openai"],
                    help="default: inferred from ANTHROPIC_API_KEY / OPENAI_API_KEY")
     p.add_argument("--model", default=None,
-                   help="default: claude-opus-5 (anthropic) or gpt-5 (openai)")
+                   help="model ID or alias: opus, haiku, gpt-5-mini; aliases select their provider. "
+                        "default: claude-opus-5 (anthropic) or gpt-5 (openai)")
     p.add_argument("--effort", choices=["low", "medium", "high", "xhigh", "max"], default="high")
     p.add_argument("--max-tokens", type=int, default=16_000)
     p.add_argument("--max-steps", type=int, default=12, help="agent mode turn limit (default: 12)")

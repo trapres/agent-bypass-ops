@@ -28,6 +28,7 @@ To run:
   .venv/bin/abo eval \
     --cases bypass-cases \
     --provider openai \
+    --model gpt-5-mini \
     --mode agent \
     --repeat 3 \
     --json runs/bypass-agent-openai.json

@@ -253,6 +253,16 @@ def test_invalid_verdict_payload_is_reported(submission):
     assert result.error.startswith("validation_error")
 
 
+def test_stringified_findings_array_is_decoded(submission):
+    bad_transport = {**VERDICT_JSON, "findings": json.dumps(VERDICT_JSON["findings"])}
+    client = FakeClient(queue=[response([tool_block("submit_verdict", bad_transport)])])
+    result = Reviewer(ReviewConfig(mode="agent"), client).review(submission)
+
+    assert result.error is None
+    assert result.verdict.verdict == "unsafe"
+    assert result.verdict.findings[0].category == "credential-exfiltration"
+
+
 # -- scanners ------------------------------------------------------------------
 
 

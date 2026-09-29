@@ -52,7 +52,9 @@ abo cases
 abo eval
 abo eval --mode both --repeat 3           # both reviewers, 3 runs each, for stability
 abo eval --only 06-unsafe-auth-bypass     # one case
-abo eval --effort max --model claude-opus-5
+abo eval --model haiku                    # Claude Haiku; alias selects Anthropic
+abo eval --model gpt-5-mini                # GPT-5 mini; alias selects OpenAI
+abo eval --model opus --effort max         # Claude Opus when you want the heavier check
 abo eval --mode agent --scanners          # LLM + semgrep + grype
 
 # what the scanners score on their own, no LLM involved

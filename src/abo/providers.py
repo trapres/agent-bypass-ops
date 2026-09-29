@@ -51,6 +51,22 @@ DEFAULT_MODELS = {
     "openai": "gpt-5",
 }
 
+# Short names are intentionally stable experiment labels. Exact model IDs still
+# work, so a provider can add a newer model without requiring a CLI change.
+MODEL_ALIASES: dict[str, tuple[str, str]] = {
+    "opus": ("anthropic", "claude-opus-5"),
+    "haiku": ("anthropic", "claude-haiku-4-5"),
+    "gpt-5-mini": ("openai", "gpt-5-mini"),
+    "gpt5-mini": ("openai", "gpt-5-mini"),
+}
+
+
+def model_alias(model: str | None) -> tuple[str, str] | None:
+    """Return ``(provider, canonical_model)`` for a known short name."""
+    if not model:
+        return None
+    return MODEL_ALIASES.get(model.lower())
+
 
 @dataclass
 class ToolUse:

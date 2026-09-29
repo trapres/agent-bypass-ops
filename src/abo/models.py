@@ -9,9 +9,10 @@ response format and as a ``strict: true`` tool input schema.
 
 from __future__ import annotations
 
+import json
 from typing import Any, Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 Severity = Literal["info", "low", "medium", "high", "critical"]
 CaseLabel = Literal["safe", "unsafe"]
@@ -38,6 +39,23 @@ class Verdict(BaseModel):
     confidence: float = Field(ge=0.0, le=1.0)
     summary: str
     findings: list[Finding] = Field(default_factory=list)
+
+    @field_validator("findings", mode="before")
+    @classmethod
+    def decode_stringified_findings(cls, value: Any) -> Any:
+        """Accept a provider's accidentally JSON-encoded findings array.
+
+        Some tool-call responses have returned the array as a string containing
+        JSON. Decode only that transport mistake; the normal list validation
+        below still checks every finding and rejects malformed values.
+        """
+        if isinstance(value, str):
+            try:
+                decoded = json.loads(value)
+            except json.JSONDecodeError:
+                return value
+            return decoded
+        return value
 
     @property
     def flagged(self) -> bool:
