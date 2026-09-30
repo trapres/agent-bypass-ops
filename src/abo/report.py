@@ -11,10 +11,19 @@ from .harness import EvalReport
 from .models import Verdict
 from .reviewer import ReviewResult
 
-OUTCOME_STYLE = {"TP": "green", "TN": "green", "FP": "yellow", "FN": "red"}
+OUTCOME_STYLE = {"TP": "green", "TN": "green", "FP": "yellow", "FN": "red",
+                 "ABSTAIN": "yellow", "ERROR": "red"}
 VERDICT_STYLE = {"safe": "green", "unsafe": "red", "needs_human_review": "yellow"}
 
 console = Console()
+
+
+def _percent(value: float | None) -> str:
+    return f"{value:.1%}" if value is not None else "not measured"
+
+
+def _cost(value: float | None) -> str:
+    return f"${value:.4f}" if value is not None else "unknown"
 
 
 def _verdict_text(verdict: str) -> Text:
@@ -57,30 +66,34 @@ def render_eval(report: EvalReport) -> None:
     summary.add_column(style="bold")
     summary.add_column()
     summary.add_row("runs", f"{int(m['runs'])}")
-    summary.add_row("accuracy", f"{m['accuracy']:.1%}")
-    summary.add_row("recall (caught unsafe)", f"{m['recall']:.1%}  [{c['TP']} of {c['TP'] + c['FN']}]")
-    summary.add_row("precision", f"{m['precision']:.1%}")
-    summary.add_row("false alarms on safe", f"{m['false_alarm_rate']:.1%}  [{c['FP']} of {c['FP'] + c['TN']}]")
-    summary.add_row("F1", f"{m['f1']:.2f}")
-    summary.add_row("abstained", f"{m['abstain_rate']:.1%}  [{c['abstain']}]")
-    summary.add_row("verdict stability", f"{m['stability']:.1%}")
+    summary.add_row("accuracy", _percent(m['accuracy']))
+    summary.add_row("recall (unsafe verdicts)", f"{_percent(m['recall'])}  [{c['TP']} of {c['unsafe']}]")
+    summary.add_row("precision", _percent(m['precision']))
+    summary.add_row("false alarms on safe", f"{_percent(m['false_alarm_rate'])}  [{c['FP']} of {c['safe']}]")
+    summary.add_row("F1", f"{m['f1']:.2f}" if m['f1'] is not None else "not measured")
+    summary.add_row("abstained (no error)", f"{_percent(m['abstain_rate'])}  [{c['abstain']}]")
+    summary.add_row("decision coverage", _percent(m['decision_coverage']))
+    summary.add_row("unsafe approved", _percent(m['unsafe_approval_rate']))
+    summary.add_row("unsafe blocked (incl. unresolved)", _percent(m['unsafe_block_rate']))
+    summary.add_row("safe blocked (incl. unresolved)", _percent(m['safe_block_rate']))
+    summary.add_row("verdict stability", _percent(m['stability']))
     if c["error"]:
         summary.add_row("errors", Text(str(c["error"]), style="red"))
     summary.add_row(
         "tokens",
         f"in {usage.input_tokens:,} / out {usage.output_tokens:,} / cached {usage.cache_read_tokens:,}",
     )
-    summary.add_row("cost", f"${usage.cost(report.config.model, report.config.provider):.3f}")
+    summary.add_row("cost estimate", _cost(usage.cost(report.config.model, report.config.provider)))
     console.print(Panel(summary, title="Summary", expand=False))
 
     misses = [
         (o, r)
         for o in report.outcomes
         for r in o.results
-        if o.classify(r) in ("FP", "FN")
+        if o.classify(r) in ("FP", "FN", "ABSTAIN", "ERROR")
     ]
     if misses:
-        console.print("\n[bold]Misses[/bold]")
+        console.print("\n[bold]Misses and unresolved reviews[/bold]")
         for outcome, result in misses:
             code = outcome.classify(result)
             console.print(
@@ -138,7 +151,7 @@ def render_review(result: ReviewResult, config_model: str,
     console.print(
         f"\n[dim]{result.usage.input_tokens:,} in / {result.usage.output_tokens:,} out / "
         f"{result.usage.cache_read_tokens:,} cached · "
-        f"${result.usage.cost(config_model, provider):.4f} · {result.duration_s:.1f}s[/dim]"
+        f"{_cost(result.usage.cost(config_model, provider))} estimated cost · {result.duration_s:.1f}s[/dim]"
     )
     if result.error:
         console.print(f"[red]error: {result.error}[/red]")

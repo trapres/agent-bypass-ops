@@ -194,6 +194,8 @@ def _warn_scanners(mode: str) -> bool:
 
 
 def cmd_eval(args: argparse.Namespace) -> int:
+    if args.repeat < 1:
+        raise ValueError("repeat must be at least 1")
     cases = load_cases(args.cases, args.only)
     if not cases:
         err_console.print(f"[red]no cases found under {args.cases}[/red]")
@@ -215,7 +217,7 @@ def cmd_eval(args: argparse.Namespace) -> int:
     if provider is None or not _have_credentials(provider):
         return 1
 
-    exit_code = 0
+    exit_codes = []
     for mode in _modes(args.mode):
         config = _config_from_args(args, mode, provider)
         scan_note = ", scanners=on" if (config.scanners and mode == "agent") else ""
@@ -232,17 +234,24 @@ def cmd_eval(args: argparse.Namespace) -> int:
                 cases, config, repeat=args.repeat, concurrency=args.concurrency, on_done=progress
             )
         render_eval(report)
-        _write_report(report, args.json)
-        if report.counts()["FN"]:
-            exit_code = 2  # a missed unsafe commit is the failure worth failing CI on
-    return exit_code
+        _write_report(report, _mode_json_path(args.json, args.mode, mode))
+        exit_codes.append(report.exit_code())
+    # A broken mode must not be hidden by a successful mode (or another miss).
+    return next((code for code in (1, 2, 3) if code in exit_codes), 0)
+
+
+def _mode_json_path(path: str | None, selected_mode: str, mode: str) -> str | None:
+    if path is None or selected_mode != "both":
+        return path
+    target = Path(path)
+    return str(target.with_name(f"{target.stem}-{mode}{target.suffix}"))
 
 
 def _write_report(report: EvalReport, explicit_path: str | None) -> None:
     if explicit_path:
         path = Path(explicit_path)
     else:
-        stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
         suffix = "-scanners" if report.config.scanners else ""
         path = Path("runs") / f"{stamp}-{report.config.mode}{suffix}.json"
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -283,7 +292,9 @@ def cmd_review(args: argparse.Namespace) -> int:
         result = Reviewer(config).review(submission)
         render_review(result, config.model, config.provider)
         if args.json:
-            Path(args.json).write_text(json.dumps(result.to_dict(), indent=2))
+            path = Path(_mode_json_path(args.json, args.mode, mode))
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps(result.to_dict(), indent=2))
     return 0
 
 

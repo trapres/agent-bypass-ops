@@ -26,18 +26,21 @@ class Submission:
     author: str = ""
     description: str = ""
     source: str = ""
+    blind_metadata: bool = False
 
     @property
     def files_changed(self) -> list[str]:
         return sorted(set(DIFF_FILE_RE.findall(self.diff)))
 
     def metadata_block(self) -> str:
-        rows = [f"submission_id: {self.id}"]
+        # Evaluation identity and provenance belong in reports, not in the
+        # reviewer's evidence. Preserve actual submission content verbatim.
+        rows = [] if self.blind_metadata else [f"submission_id: {self.id}"]
         if self.title:
             rows.append(f"commit_subject: {self.title}")
         if self.author:
             rows.append(f"author: {self.author}")
-        if self.source:
+        if self.source and not self.blind_metadata:
             rows.append(f"source: {self.source}")
         rows.append(f"files_changed: {', '.join(self.files_changed) or '(none parsed)'}")
         if self.description:
@@ -77,7 +80,7 @@ def load_case(case_dir: Path) -> Case:
     if repo_dir.is_dir():
         workspace = DirWorkspace(repo_dir)
     else:
-        workspace = EmptyWorkspace("this fixture case ships only a diff")
+        workspace = EmptyWorkspace("this submission includes only a diff")
 
     label = meta["label"]
     if label not in ("safe", "unsafe"):
@@ -91,6 +94,7 @@ def load_case(case_dir: Path) -> Case:
         author=meta.get("author", ""),
         description=meta.get("stated_intent", ""),
         source=f"fixture case {case_dir.name}",
+        blind_metadata=True,
     )
     return Case(
         submission=submission,

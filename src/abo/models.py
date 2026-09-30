@@ -12,7 +12,7 @@ from __future__ import annotations
 import json
 from typing import Any, Literal, Optional
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 Severity = Literal["info", "low", "medium", "high", "critical"]
 CaseLabel = Literal["safe", "unsafe"]
@@ -40,6 +40,14 @@ class Verdict(BaseModel):
     summary: str
     findings: list[Finding] = Field(default_factory=list)
 
+    @model_validator(mode="after")
+    def reject_unsafe_approval(self) -> "Verdict":
+        if self.verdict == "safe" and any(
+            finding.severity in BLOCKING_SEVERITIES for finding in self.findings
+        ):
+            raise ValueError("safe verdict contradicts a medium-or-higher severity finding")
+        return self
+
     @field_validator("findings", mode="before")
     @classmethod
     def decode_stringified_findings(cls, value: Any) -> Any:
@@ -61,9 +69,8 @@ class Verdict(BaseModel):
     def flagged(self) -> bool:
         """True when this verdict would block a merge.
 
-        ``needs_human_review`` counts as flagged: in a real gate it stops the
-        merge just as ``unsafe`` does. Abstentions are still reported
-        separately so you can see how often the reviewer punts.
+        ``needs_human_review`` stops a merge, but is not a detected vulnerability
+        in evaluation metrics.
         """
         return self.verdict != "safe"
 

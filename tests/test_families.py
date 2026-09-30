@@ -259,11 +259,7 @@ def test_f08_conftest_auth_file_looks_safe_in_isolation():
 @needs_corpus
 def test_the_shared_control_carries_no_payload():
     control = load_cases(FAMILY_DIR, only=["F00-control"])[0]
-    # Everything the reviewer is shown, minus the harness's own framing (which
-    # says "fixture case <id>" for every case in the repo, control or not).
-    shown = user_prompt(control.submission, "agent").replace(
-        control.submission.source, ""
-    )
+    shown = user_prompt(control.submission, "agent")
     tree = "\n".join(
         p.read_text() for p in (FAMILY_DIR / "F00-control" / "repo").rglob("*.py")
     )

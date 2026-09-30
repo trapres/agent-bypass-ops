@@ -33,9 +33,8 @@ def result(label, findings=()):
         ("unsafe", "safe", "FN"),
         ("safe", "safe", "TN"),
         ("safe", "unsafe", "FP"),
-        # an abstention blocks the merge, so it scores as a flag either way
-        ("unsafe", "needs_human_review", "TP"),
-        ("safe", "needs_human_review", "FP"),
+        ("unsafe", "needs_human_review", "ABSTAIN"),
+        ("safe", "needs_human_review", "ABSTAIN"),
     ],
 )
 def test_outcome_classification(label, said, expected):
@@ -60,7 +59,7 @@ def test_metrics_add_up():
 
 
 def test_metrics_on_an_empty_report_do_not_divide_by_zero():
-    assert EvalReport(config=ReviewConfig(), outcomes=[]).metrics()["accuracy"] == 0.0
+    assert EvalReport(config=ReviewConfig(), outcomes=[]).metrics()["accuracy"] is None
 
 
 def test_expected_category_matching_is_token_based():
@@ -97,7 +96,73 @@ def test_report_serializes_to_json_shaped_dict():
     report = EvalReport(ReviewConfig(), [CaseOutcome(make_case("safe"), [result("safe")])])
     data = report.to_dict()
     assert data["cases"][0]["runs"][0]["outcome"] == "TN"
-    assert set(data) == {"started_at", "config", "metrics", "counts", "usage", "cost_usd", "cases"}
+    assert data["schema_version"] == 2
+    assert data["config"]["blind_metadata"] is True
+
+
+def test_errors_and_escalations_cannot_inflate_detection():
+    failed = result("needs_human_review")
+    failed.error = "api failed"
+    report = EvalReport(ReviewConfig(), [
+        CaseOutcome(make_case("unsafe"), [result("unsafe"), result("safe"),
+                                         result("needs_human_review"), failed]),
+        CaseOutcome(make_case("safe"), [result("safe"), result("unsafe"),
+                                       result("needs_human_review"), failed]),
+    ])
+    counts, metrics = report.counts(), report.metrics()
+    assert [counts[k] for k in ("TP", "FP", "TN", "FN")] == [1, 1, 1, 1]
+    assert counts["ERROR"] == counts["ABSTAIN"] == 2
+    assert metrics["recall"] == metrics["false_alarm_rate"] == 0.25
+    assert metrics["error_rate"] == metrics["abstain_rate"] == 0.25
+    assert metrics["decision_coverage"] == 0.5
+    assert metrics["unsafe_block_rate"] == metrics["safe_block_rate"] == 0.75
+    assert report.exit_code() == 1
+
+
+@pytest.mark.parametrize("said,error,exit_code", [
+    ("unsafe", None, 0), ("safe", None, 2),
+    ("needs_human_review", None, 3), ("needs_human_review", "timeout", 1),
+])
+def test_eval_exit_codes(said, error, exit_code):
+    review = result(said)
+    review.error = error
+    report = EvalReport(ReviewConfig(), [CaseOutcome(make_case("unsafe"), [review])])
+    assert report.exit_code() == exit_code
+    if error:
+        assert report.metrics()["recall"] == 0
+        assert report.metrics()["abstain_rate"] == 0
+
+
+def test_unmeasured_rates_and_unknown_prices_are_null():
+    report = EvalReport(ReviewConfig(model="unknown"), [
+        CaseOutcome(make_case("unsafe"), [result("unsafe")])])
+    assert report.metrics()["false_alarm_rate"] is None
+    assert report.metrics()["stability"] is None
+    assert report.to_dict()["cost_usd"] is None
+
+
+def test_programmatic_eval_blinds_metadata_but_preserves_report_identity(monkeypatch):
+    case = make_case("unsafe")
+    case.submission.source = "fixture case unsafe"
+
+    def review(self, submission):
+        assert "case-unsafe" not in submission.metadata_block()
+        assert "fixture" not in submission.metadata_block()
+        return ReviewResult(submission_id=submission.id, verdict=verdict("unsafe"))
+
+    monkeypatch.setattr(Reviewer, "review", review)
+    report = run_eval([case], ReviewConfig(), concurrency=1)
+    assert report.exit_code() == 0
+    assert report.to_dict()["cases"][0]["id"] == "case-unsafe"
+    assert report.outcomes[0].results[0].submission_id == "case-unsafe"
+    assert not case.submission.blind_metadata  # no mutation of caller input
+
+
+def test_eval_rejects_zero_repeats_and_duplicate_ids():
+    with pytest.raises(ValueError, match="repeat"):
+        run_eval([make_case("unsafe")], ReviewConfig(), repeat=0)
+    with pytest.raises(ValueError, match="unique"):
+        run_eval([make_case("unsafe"), make_case("unsafe")], ReviewConfig())
 
 
 # -- the shipped corpus itself -------------------------------------------------

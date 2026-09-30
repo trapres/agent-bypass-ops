@@ -215,7 +215,7 @@ def test_cost_is_scoped_per_provider():
     u = Usage(input_tokens=1_000_000, output_tokens=1_000_000)
     assert u.cost("claude-opus-5", "anthropic") == pytest.approx(30.0)
     # unknown/unpriced model reports 0 rather than an invented number
-    assert u.cost("gpt-5", "openai") == 0.0
+    assert u.cost("gpt-5", "openai") is None
 
 
 def test_build_provider_rejects_unknown_names():

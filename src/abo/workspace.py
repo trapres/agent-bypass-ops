@@ -97,6 +97,10 @@ class DirWorkspace:
         for entry in sorted(base.rglob("*")):
             if any(part in SKIP_DIRS for part in entry.parts):
                 continue
+            try:
+                self._resolve(str(entry.relative_to(self.root)))
+            except WorkspaceError:
+                continue  # do not expose files through out-of-root symlinks
             if entry.is_file():
                 out.append(str(entry.relative_to(self.root)))
             if len(out) >= MAX_LISTED_FILES:
@@ -121,7 +125,8 @@ class DirWorkspace:
         for rel in self.list_files():
             if path_glob and not fnmatch.fnmatch(rel, path_glob):
                 continue
-            data = (self.root / rel).read_bytes()
+            # Revalidate at the read boundary, even for listed paths.
+            data = self._resolve(rel).read_bytes()
             if _looks_binary(data):
                 continue
             for n, line in enumerate(data.decode("utf-8", errors="replace").splitlines(), 1):

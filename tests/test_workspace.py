@@ -65,6 +65,42 @@ def test_bad_regex_is_a_tool_error_not_a_crash(tree):
         DirWorkspace(tree).grep("(unclosed")
 
 
+def test_external_symlinks_are_not_read_or_listed(tmp_path):
+    root = tmp_path / "repo"
+    root.mkdir()
+    outside = tmp_path / "outside.txt"
+    outside.write_text("OUTSIDE_MARKER")
+    (root / "escape.txt").symlink_to(outside)
+    (root / "escape-dir").symlink_to(tmp_path, target_is_directory=True)
+    ws = DirWorkspace(root)
+    assert ws.list_files() == []
+    assert ws.grep("OUTSIDE_MARKER") == []
+    for path in ("escape.txt", "escape-dir/outside.txt"):
+        with pytest.raises(WorkspaceError, match="escapes"):
+            ws.read_file(path)
+    with pytest.raises(WorkspaceError, match="escapes"):
+        ws.list_files("escape-dir")
+
+
+def test_grep_rechecks_paths_even_if_listing_contains_external_link(tmp_path, monkeypatch):
+    root = tmp_path / "repo"
+    root.mkdir()
+    outside = tmp_path / "outside.txt"
+    outside.write_text("OUTSIDE_MARKER")
+    (root / "link").symlink_to(outside)
+    ws = DirWorkspace(root)
+    monkeypatch.setattr(ws, "list_files", lambda: ["link"])
+    with pytest.raises(WorkspaceError, match="escapes"):
+        ws.grep("OUTSIDE_MARKER")
+
+
+def test_internal_symlink_still_works(tree):
+    (tree / "alias.py").symlink_to("src/util.py")
+    ws = DirWorkspace(tree)
+    assert "SECRET_NAME" in ws.read_file("alias.py")
+    assert any(hit.startswith("alias.py:") for hit in ws.grep("SECRET_NAME"))
+
+
 def test_empty_workspace_explains_itself():
     ws = EmptyWorkspace()
     with pytest.raises(WorkspaceError):

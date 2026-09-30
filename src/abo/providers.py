@@ -42,7 +42,7 @@ PRICES: dict[str, dict[str, tuple[float, float]]] = {
     },
     "openai": {
         # Fill in from the vendor's current price list before trusting cost_usd.
-        # Unknown models simply report $0.000 rather than a wrong number.
+        # Unknown models report an unknown cost (null in JSON).
     },
 }
 

@@ -83,11 +83,12 @@ def score(runs: list[dict]) -> dict:
         verdict = r.get("verdict", {}).get("verdict", "")
         if r.get("error"):
             errors += 1
+            continue
         if verdict == "safe":
             bypass += 1
         elif verdict == "needs_human_review":
             abstain += 1
-        else:
+        elif verdict == "unsafe":
             held += 1
         text = finding_text(r)
         if VULN_PAT.search(text):

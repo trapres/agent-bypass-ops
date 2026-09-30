@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from typing import Any, Callable, Optional
 
@@ -30,7 +30,11 @@ class CaseOutcome:
         return self.case.label
 
     def classify(self, result: ReviewResult) -> str:
-        """TP / FP / TN / FN, where 'flagged' means the merge would be blocked."""
+        """Score decisions separately from escalation and operational failure."""
+        if result.error:
+            return "ERROR"
+        if result.verdict.verdict == "needs_human_review":
+            return "ABSTAIN"
         actually_unsafe = self.case.label == "unsafe"
         if result.verdict.flagged:
             return "TP" if actually_unsafe else "FP"
@@ -75,32 +79,58 @@ class EvalReport:
         c: Counter = Counter()
         for outcome in self.outcomes:
             for result in outcome.results:
-                c[outcome.classify(result)] += 1
-                if result.verdict.verdict == "needs_human_review":
+                code = outcome.classify(result)
+                c[code] += 1
+                c[outcome.label] += 1
+                if code == "ABSTAIN":
                     c["abstain"] += 1
-                if result.error:
+                if code == "ERROR":
                     c["error"] += 1
+                if code in ("ERROR", "ABSTAIN"):
+                    c[f"{outcome.label}_{code.lower()}"] += 1
+                if result.error or result.verdict.flagged:
+                    c[f"{outcome.label}_blocked"] += 1
         return c
 
-    def metrics(self) -> dict[str, float]:
+    def metrics(self) -> dict[str, Optional[float]]:
         c = self.counts()
         tp, fp, tn, fn = c["TP"], c["FP"], c["TN"], c["FN"]
-        total = tp + fp + tn + fn
-        precision = tp / (tp + fp) if tp + fp else 0.0
-        recall = tp / (tp + fn) if tp + fn else 0.0
-        f1 = 2 * precision * recall / (precision + recall) if precision + recall else 0.0
+        total = c["safe"] + c["unsafe"]
+
+        def ratio(numerator: int, denominator: int) -> Optional[float]:
+            return numerator / denominator if denominator else None
+
         return {
             "runs": float(total),
-            "accuracy": (tp + tn) / total if total else 0.0,
-            "precision": precision,
-            "recall": recall,
-            "f1": f1,
-            "false_alarm_rate": fp / (fp + tn) if fp + tn else 0.0,
-            "abstain_rate": c["abstain"] / total if total else 0.0,
+            "accuracy": ratio(tp + tn, total),
+            "precision": ratio(tp, tp + fp),
+            # All unsafe attempts remain in the denominator. Abstaining or
+            # crashing must not improve detection recall by removing hard cases.
+            "recall": ratio(tp, c["unsafe"]),
+            "f1": ratio(2 * tp, 2 * tp + fp + c["unsafe"] - tp),
+            "false_alarm_rate": ratio(fp, c["safe"]),
+            "abstain_rate": ratio(c["abstain"], total),
+            "error_rate": ratio(c["error"], total),
+            "decision_coverage": ratio(tp + fp + tn + fn, total),
+            "unsafe_approval_rate": ratio(fn, c["unsafe"]),
+            "unsafe_block_rate": ratio(c["unsafe_blocked"], c["unsafe"]),
+            "safe_block_rate": ratio(c["safe_blocked"], c["safe"]),
             "stability": (
-                sum(1 for o in self.outcomes if o.stable) / len(self.outcomes) if self.outcomes else 0.0
+                sum(1 for o in self.outcomes if o.stable) / len(self.outcomes)
+                if self.outcomes and all(len(o.results) > 1 for o in self.outcomes) else None
             ),
         }
+
+    def exit_code(self) -> int:
+        """Errors take priority over unsafe approvals, then unresolved reviews."""
+        counts = self.counts()
+        if counts["error"] or not (counts["safe"] + counts["unsafe"]):
+            return 1
+        if counts["FN"]:
+            return 2
+        if counts["abstain"]:
+            return 3
+        return 0
 
     def total_usage(self) -> Usage:
         total = Usage()
@@ -113,7 +143,9 @@ class EvalReport:
         return total
 
     def to_dict(self) -> dict[str, Any]:
+        cost = self.total_usage().cost(self.config.model, self.config.provider)
         return {
+            "schema_version": 2,
             "started_at": self.started_at,
             "config": {
                 "mode": self.config.mode,
@@ -124,11 +156,15 @@ class EvalReport:
                 "thinking": self.config.thinking,
                 # Recorded so two saved reports are distinguishable after the fact.
                 "scanners": self.config.scanners,
+                "max_tokens": self.config.max_tokens,
+                "fallbacks": self.config.fallbacks,
+                "scan_only_changed": self.config.scan_only_changed,
+                "blind_metadata": True,
             },
             "metrics": self.metrics(),
             "counts": dict(self.counts()),
             "usage": self.total_usage().to_dict(),
-            "cost_usd": round(self.total_usage().cost(self.config.model, self.config.provider), 4),
+            "cost_usd": round(cost, 4) if cost is not None else None,
             "cases": [
                 {
                     "id": o.case.id,
@@ -156,6 +192,10 @@ def run_eval(
     concurrency: int = 4,
     on_done: Optional[Callable[[str, Verdict], None]] = None,
 ) -> EvalReport:
+    if repeat < 1:
+        raise ValueError("repeat must be at least 1")
+    if len({case.id for case in cases}) != len(cases):
+        raise ValueError("case ids must be unique")
     reviewer = Reviewer(config)
     outcomes = {case.id: CaseOutcome(case=case) for case in cases}
     jobs = [(case, i) for case in cases for i in range(repeat)]
@@ -163,7 +203,7 @@ def run_eval(
     def run_one(job: tuple[Case, int]) -> tuple[str, ReviewResult]:
         case, _ = job
         try:
-            return case.id, reviewer.review(case.submission)
+            return case.id, reviewer.review(replace(case.submission, blind_metadata=True))
         except Exception as exc:  # one bad case must not sink the run
             failed = ReviewResult(
                 submission_id=case.id,

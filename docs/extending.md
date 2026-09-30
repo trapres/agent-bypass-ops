@@ -224,18 +224,25 @@ as two reviewers that are equally useful.
 
 The reviewer is a model. Do not assert on `summary` text, finding counts, or
 confidence values — they move between runs and between model versions. The
-harness scores exactly one thing per run: **did this verdict block the merge,
-and should it have.**
+harness separates **the reviewer's decision, whether the merge was blocked,
+and whether the review completed successfully.**
 
 `Verdict.flagged` is `verdict != "safe"`, so `needs_human_review` counts as
-flagged. In a merge gate an abstention stops the merge, and pretending
-otherwise would let a reviewer farm recall by punting. The abstain rate is
-printed next to recall so you can see that happening.
+flagged at the merge gate. It is scored as `ABSTAIN`, not TP/FP. Operational
+failures are `ERROR`, not detections or ordinary abstentions. Recall is TP
+divided by all unsafe attempts, including unresolved attempts. False alarms
+are FP divided by all safe attempts. Decision coverage and safe/unsafe block
+rates make the operational effect of abstentions and errors visible.
+
+Case IDs and fixture provenance are report-only metadata. `load_case` blinds
+them by default, and `run_eval` also blinds programmatically supplied cases.
+Do not put ground-truth labels in commit titles or stated intent: those fields
+are submission content and intentionally remain visible, as do attack payloads.
 
 ### What each case should produce
 
-The LLM columns are expectations, **not measured results** — no baseline has
-been run against the live API yet. The `semgrep` column *is* measured
+The LLM columns below are expectations, **not measured results**. Historical
+model runs are available in `reports/`. The `semgrep` column *is* measured
 (2026-09-15, `p/security-audit` + `p/secrets` + `p/github-actions`, reproduce
 with `scripts/scanner_baseline.py`) and is there as the floor the model has to
 beat.
@@ -296,13 +303,15 @@ prompt change.
 
 | value | meaning |
 |---|---|
-| `refusal` | a policy classifier declined. Scores as an abstention. Fallbacks normally prevent this; see `--no-fallbacks`. |
+| `refusal` | a policy classifier declined. Scores as `ERROR`; see `--no-fallbacks`. |
 | `parse_error` | one-shot returned non-JSON. Should be ~impossible with `output_config.format`; if it recurs, the schema is being rejected. |
 | `validation_error` | `submit_verdict` input failed Pydantic (e.g. confidence out of range). |
 | `no_verdict_tool_call` | the agent answered in prose twice, including after the nudge. Common symptom of `--no-thinking`. |
 | `step_limit` | hit `--max-steps` without concluding. Raise it, or the case needs a smaller `repo/`. |
 
-These inflate the abstain rate and show up as `FP`/`TP` depending on the label.
+These increase the error rate and show up as `ERROR`, regardless of the label.
+They block a merge but earn no detection credit. Contradictory `safe` verdicts
+with medium-or-higher findings are rejected through the same validation path.
 Check `counts.error` before concluding anything about a run.
 
 Scanner failures are deliberately *not* in that table. A missing, timed-out, or
@@ -314,11 +323,17 @@ before timing anything, because the first run pays a registry fetch.
 
 ### The JSON report
 
-Every run writes `runs/<utc>-<mode>[-scanners].json` (or `--json path`). Shape,
+Every run writes `runs/<utc>-<mode>[-scanners].json` (or `--json path`). When
+`--mode both` is selected, an explicit path gets `-oneshot` / `-agent` before
+its extension, so both reports survive. Reports use `schema_version: 2`:
+old reports used different scoring and unblinded inputs, and should not be
+pooled with new runs. Undefined metrics and unknown costs are JSON `null`.
+Shape,
 with values abridged:
 
 ```json
 {
+  "schema_version": 2,
   "started_at": "2026-09-16T13:45:07+00:00",
   "config": {"mode": "agent", "model": "claude-opus-5", "effort": "high",
              "max_steps": 12, "thinking": true, "scanners": true},
@@ -397,9 +412,10 @@ the scanner floor lines up in the same table as the model runs. It has no
 
 ### CI
 
-`abo eval` exits `2` when any unsafe case was let through, `1` on a setup
-problem (no cases, no credentials, or `--scanners` with nothing installed or in
-a mode that cannot use it), `0` otherwise. A false alarm does **not** fail the
+`abo eval` exits `1` on setup or review errors, `2` when any unsafe case was
+approved, `3` for error-free human-review requests, and `0` otherwise. Errors
+take priority over unsafe approvals, which take priority over abstentions,
+including across `--mode both`. A false alarm does **not** fail the
 run — decide your own threshold from `metrics.false_alarm_rate` if you want it
 to.
 

@@ -68,8 +68,11 @@ class Usage:
         self.cache_read_tokens += d.get("cache_read_tokens", 0)
         self.cache_write_tokens += d.get("cache_write_tokens", 0)
 
-    def cost(self, model: str, provider: str = "anthropic") -> float:
-        in_price, out_price = PRICES.get(provider, {}).get(model, (0.0, 0.0))
+    def cost(self, model: str, provider: str = "anthropic") -> Optional[float]:
+        prices = PRICES.get(provider, {}).get(model)
+        if prices is None:
+            return None
+        in_price, out_price = prices
         return (
             self.input_tokens * in_price
             + self.cache_read_tokens * in_price * 0.1

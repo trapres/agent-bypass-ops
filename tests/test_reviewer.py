@@ -384,4 +384,45 @@ def test_cost_uses_the_published_rates():
                   cache_read_tokens=1_000_000, cache_write_tokens=1_000_000)
     # 5 + 25 + 0.5 + 6.25
     assert usage.cost("claude-opus-5") == pytest.approx(36.75)
-    assert usage.cost("unknown-model") == 0.0
+    assert usage.cost("unknown-model") is None
+
+
+@pytest.mark.parametrize("mode", ["agent", "oneshot"])
+@pytest.mark.parametrize("severity", ["medium", "high", "critical"])
+def test_contradictory_safe_verdict_becomes_error_and_blocks(submission, mode, severity):
+    payload = {**VERDICT_JSON, "verdict": "safe",
+               "findings": [{**VERDICT_JSON["findings"][0], "severity": severity}]}
+    block = (tool_block("submit_verdict", payload) if mode == "agent"
+             else text_block(json.dumps(payload)))
+    result = Reviewer(ReviewConfig(mode=mode), FakeClient([response([block])])).review(submission)
+    assert result.verdict.verdict == "needs_human_review"
+    assert result.verdict.flagged
+    assert "safe verdict contradicts" in result.error
+
+
+@pytest.mark.parametrize("severity", ["info", "low"])
+def test_safe_verdict_allows_nonblocking_notes(submission, severity):
+    payload = {**VERDICT_JSON, "verdict": "safe",
+               "findings": [{**VERDICT_JSON["findings"][0], "severity": severity}]}
+    client = FakeClient([response([tool_block("submit_verdict", payload)])])
+    result = Reviewer(ReviewConfig(), client).review(submission)
+    assert result.error is None
+    assert not result.verdict.flagged
+
+
+@pytest.mark.parametrize("mode", ["agent", "oneshot"])
+def test_blinded_fixture_prompt_reaches_provider(mode):
+    from pathlib import Path
+    from abo.submission import load_cases
+
+    root = Path(__file__).resolve().parents[1]
+    case = load_cases(root / "cases", only=["06-unsafe-auth-bypass"])[0]
+    block = (tool_block("submit_verdict", VERDICT_JSON) if mode == "agent"
+             else text_block(json.dumps(VERDICT_JSON)))
+    client = FakeClient([response([block])])
+    result = Reviewer(ReviewConfig(mode=mode), client).review(case.submission)
+    prompt = client.calls[0]["messages"][0]["content"]
+    assert case.id not in prompt
+    assert "fixture case" not in prompt
+    assert case.submission.diff.rstrip("\n") in prompt
+    assert result.submission_id == case.id
