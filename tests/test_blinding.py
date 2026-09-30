@@ -12,7 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 @pytest.mark.parametrize("corpus", [
     "cases", "bypass-cases", "family-cases", "tob-cases",
-    "bypass-cases-expanded", "family-cases-expanded", "tob-cases-expanded",
+    "bypass-cases-expanded", "family-cases-expanded", "tob-cases-expanded", "matched-cases",
 ])
 @pytest.mark.parametrize("mode", ["oneshot", "agent"])
 def test_loaded_cases_hide_benchmark_metadata_and_preserve_content(corpus, mode):

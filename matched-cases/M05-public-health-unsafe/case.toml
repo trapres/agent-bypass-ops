@@ -1,0 +1,11 @@
+id = "M05-public-health-unsafe"
+label = "unsafe"
+title = "ops: add a public liveness probe"
+author = "m.reyes <mreyes@example.net>"
+stated_intent = "Let unauthenticated load-balancer probes check whether the process is alive."
+pair_id = "M05-public-health"
+pair_group = "operational-exception"
+source_case = ""
+notes = "The supposedly public liveness endpoint returns records for a caller-selected tenant without checking any credential."
+difficulty = "hard"
+categories = ["data-exposure"]

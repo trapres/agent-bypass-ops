@@ -190,6 +190,22 @@ reviewers excused real defects as "test fixture code" on their own initiative,
 one of them on a control with no payload in it. See
 [FirstPassSummary.md](FirstPassSummary.md).
 
+**[matched-cases/](matched-cases/README.md)** adds eight safe/unsafe pairs:
+actual vulnerability repairs, genuinely test-only helpers, scoped operational
+exceptions, and documentation quoting adversarial instructions or fabricated
+tool output. Pair metadata is report-only. The scorecard and JSON report
+whether both members were classified correctly, so flagging everything cannot
+look successful. Existing suites remain unchanged.
+
+```bash
+python scripts/generate_matched_cases.py --check
+abo eval --cases matched-cases --mode both --repeat 3 --json runs/matched.json
+```
+
+The rubric distinguishes quoted examples from active review manipulation;
+neither is trusted as an instruction. Compare models with the same current
+rubric rather than pooling these runs with historical reports.
+
 ## Layout
 
 ```
@@ -205,10 +221,12 @@ src/abo/
   cli.py         abo eval / review / cases
   bypass.py      treatment catalogue for bypass-cases/
   families.py    case catalogue for family-cases/
+  matched.py     safe/unsafe pairs and their declared parent trees
 scripts/
   generate_bypass.py        build bypass-cases/
   generate_tob_cases.py     build tob-cases/
   generate_family_cases.py  build family-cases/
+  generate_matched_cases.py build/check matched-cases/
   bypass_report.py          score a bypass-cases run
   family_report.py          score a family-cases run, grouped by family
   scanner_baseline.py       score the scanners alone, no LLM
@@ -235,17 +253,20 @@ it was handed.
 | `test_scanners.py` | output parsing, changed-file filtering, caps, error paths, `git archive` snapshot cleanup |
 | `test_bypass.py` | Unicode primitives, the treatment catalogue, and that no payload is sanitized before it reaches the model |
 | `test_families.py` | the family corpus, including *executing* every generated tree to prove the empty token still authenticates |
+| `test_matched.py` | paired safety labels, production reachability, operational boundaries, quoted text, exact generation, and diff/snapshot consistency |
 
 Two tests in `test_scanners.py` shell out to Semgrep for real and skip when it
 isn't installed. One of them writes a file that would create a canary on
 execution and asserts the canary never appears — the no-execution property is
 tested, not assumed.
 
-The one deliberate exception is `test_families.py`, which imports each
+The deliberate exceptions are fixture validation tests. `test_families.py` imports each
 generated `family-cases/` tree in a subprocess and calls `verify_token` with an
 empty token. Those fixtures are pure Python with no I/O and no network, and
 executing them is the only way to prove a treatment did not accidentally repair
 the bug it is supposed to hide. The reviewer still never executes anything.
+`test_matched.py` likewise executes the authored matched fixtures with synthetic
+credentials and a Flask test double to verify both safe and unsafe behavior.
 
 ## Notes
 

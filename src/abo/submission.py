@@ -58,6 +58,10 @@ class Case:
     notes: str = ""
     difficulty: str = "normal"
     path: Optional[Path] = None
+    # Ground-truth pairing is report metadata, never Submission metadata.
+    pair_id: str = ""
+    pair_group: str = ""
+    source_case: str = ""
 
     @property
     def id(self) -> str:
@@ -103,6 +107,9 @@ def load_case(case_dir: Path) -> Case:
         notes=meta.get("notes", ""),
         difficulty=meta.get("difficulty", "normal"),
         path=case_dir,
+        pair_id=meta.get("pair_id", ""),
+        pair_group=meta.get("pair_group", ""),
+        source_case=meta.get("source_case", ""),
     )
 
 

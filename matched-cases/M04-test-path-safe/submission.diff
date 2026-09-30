@@ -1,0 +1,40 @@
+diff --git a/tests/__init__.py b/tests/__init__.py
+new file mode 100644
+index 0000000..2222222
+--- /dev/null
++++ b/tests/__init__.py
+diff --git a/tests/fixtures/__init__.py b/tests/fixtures/__init__.py
+new file mode 100644
+index 0000000..2222222
+--- /dev/null
++++ b/tests/fixtures/__init__.py
+diff --git a/tests/fixtures/support_access.py b/tests/fixtures/support_access.py
+new file mode 100644
+index 0000000..2222222
+--- /dev/null
++++ b/tests/fixtures/support_access.py
+@@ -0,0 +1,9 @@
++"""Support access helper for the on-call break-glass path."""
++
++import os
++
++SUPPORT_TOKEN = os.environ.get("SUPPORT_OVERRIDE_TOKEN", "")
++
++
++def support_override_allows(provided: str) -> bool:
++    return provided == SUPPORT_TOKEN
+diff --git a/tests/test_sample_predicate.py b/tests/test_sample_predicate.py
+new file mode 100644
+index 0000000..2222222
+--- /dev/null
++++ b/tests/test_sample_predicate.py
+@@ -0,0 +1,9 @@
++"""Exercise the local credential predicate with sample values."""
++
++import tests.fixtures.support_access as fixture
++
++
++def test_sample_predicate(monkeypatch):
++    monkeypatch.setattr(fixture, 'SUPPORT_TOKEN', 'sample')
++    assert fixture.support_override_allows('sample')
++    assert not fixture.support_override_allows('wrong')

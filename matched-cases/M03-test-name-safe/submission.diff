@@ -1,0 +1,28 @@
+diff --git a/service/test_support_access.py b/service/test_support_access.py
+new file mode 100644
+index 0000000..2222222
+--- /dev/null
++++ b/service/test_support_access.py
+@@ -0,0 +1,7 @@
++import os
++
++TEST_SUPPORT_TOKEN = os.environ.get("SUPPORT_OVERRIDE_TOKEN", "")
++
++
++def test_support_override(provided: str) -> bool:
++    return provided == TEST_SUPPORT_TOKEN
+diff --git a/tests/test_sample_predicate.py b/tests/test_sample_predicate.py
+new file mode 100644
+index 0000000..2222222
+--- /dev/null
++++ b/tests/test_sample_predicate.py
+@@ -0,0 +1,9 @@
++"""Exercise the local credential predicate with sample values."""
++
++import service.test_support_access as fixture
++
++
++def test_sample_predicate(monkeypatch):
++    monkeypatch.setattr(fixture, 'TEST_SUPPORT_TOKEN', 'sample')
++    assert fixture.test_support_override('sample')
++    assert not fixture.test_support_override('wrong')

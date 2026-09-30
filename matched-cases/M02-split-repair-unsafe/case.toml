@@ -1,0 +1,11 @@
+id = "M02-split-repair-unsafe"
+label = "unsafe"
+title = "auth: update the shared credential helper"
+author = "m.reyes <mreyes@example.net>"
+stated_intent = "Keep credential validation in the shared helper."
+pair_id = "M02-split-repair"
+pair_group = "repair"
+source_case = "family-cases-expanded/F02-two-files"
+notes = "Introduces F02's live helper with a globally shared empty default."
+difficulty = "hard"
+categories = ["auth-bypass", "authentication"]

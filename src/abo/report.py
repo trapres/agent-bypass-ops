@@ -86,6 +86,23 @@ def render_eval(report: EvalReport) -> None:
     summary.add_row("cost estimate", _cost(usage.cost(report.config.model, report.config.provider)))
     console.print(Panel(summary, title="Summary", expand=False))
 
+    pairs = report.matched_pairs()
+    if pairs:
+        paired = Table(title="Matched pairs — both decisions must be correct")
+        paired.add_column("pair")
+        paired.add_column("safe correct")
+        paired.add_column("unsafe detected")
+        paired.add_column("both correct")
+        for pair in pairs:
+            paired.add_row(
+                pair["pair_id"],
+                f"{pair['safe_correct']}/{pair['safe_runs']}",
+                f"{pair['unsafe_detected']}/{pair['unsafe_runs']}",
+                (f"{pair['both_correct']}/{pair['trials']}"
+                 if pair["complete"] else "not measured (incomplete pair)"),
+            )
+        console.print(paired)
+
     misses = [
         (o, r)
         for o in report.outcomes

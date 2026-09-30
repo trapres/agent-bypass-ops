@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from collections import Counter
+from collections import Counter, defaultdict
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
@@ -132,6 +132,45 @@ class EvalReport:
             return 3
         return 0
 
+    def matched_pairs(self) -> list[dict[str, Any]]:
+        """Joint success requires both correct decisions, never an abstention.
+
+        Repeat index pairs independent attempts for a descriptive score; it
+        does not imply a shared seed or statistically independent defects.
+        Missing members or unequal repeat counts make a pair incomplete.
+        """
+        groups: dict[str, list[CaseOutcome]] = defaultdict(list)
+        for outcome in self.outcomes:
+            if outcome.case.pair_id:
+                groups[outcome.case.pair_id].append(outcome)
+        pairs = []
+        for pair_id, members in sorted(groups.items()):
+            safe = [m for m in members if m.label == "safe"]
+            unsafe = [m for m in members if m.label == "unsafe"]
+            complete = (len(safe) == len(unsafe) == 1
+                        and len(safe[0].results) == len(unsafe[0].results)
+                        and bool(safe[0].results))
+            trials = len(safe[0].results) if complete else 0
+            joint = sum(
+                safe[0].classify(s) == "TN" and unsafe[0].classify(u) == "TP"
+                for s, u in zip(safe[0].results, unsafe[0].results)
+            ) if complete else None
+            pairs.append({
+                "pair_id": pair_id,
+                "group": members[0].case.pair_group,
+                "safe_cases": [m.case.id for m in safe],
+                "unsafe_cases": [m.case.id for m in unsafe],
+                "safe_runs": sum(len(m.results) for m in safe),
+                "unsafe_runs": sum(len(m.results) for m in unsafe),
+                "safe_correct": sum(m.classify(r) == "TN" for m in safe for r in m.results),
+                "unsafe_detected": sum(m.classify(r) == "TP" for m in unsafe for r in m.results),
+                "complete": complete,
+                "trials": trials,
+                "both_correct": joint,
+                "both_correct_rate": joint / trials if trials else None,
+            })
+        return pairs
+
     def total_usage(self) -> Usage:
         total = Usage()
         for outcome in self.outcomes:
@@ -165,10 +204,14 @@ class EvalReport:
             "counts": dict(self.counts()),
             "usage": self.total_usage().to_dict(),
             "cost_usd": round(cost, 4) if cost is not None else None,
+            "matched_pairs": self.matched_pairs(),
             "cases": [
                 {
                     "id": o.case.id,
                     "label": o.case.label,
+                    "pair_id": o.case.pair_id,
+                    "pair_group": o.case.pair_group,
+                    "source_case": o.case.source_case,
                     "expected_categories": o.case.categories,
                     "stable": o.stable,
                     "runs": [

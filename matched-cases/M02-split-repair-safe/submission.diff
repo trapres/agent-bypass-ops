@@ -1,0 +1,49 @@
+diff --git a/service/auth.py b/service/auth.py
+index 1111111..2222222 100644
+--- a/service/auth.py
++++ b/service/auth.py
+@@ -1,16 +1,7 @@
+ """Tenant API-token verification."""
+ 
+-import hmac
+-
+-from .flags import support_override_allows
+-from .store import token_for_tenant
++from .flags import tenant_token_matches
+ 
+ 
+ def verify_token(tenant_id: str, provided: str) -> bool:
+-    """Return True if `provided` is the API token for `tenant_id`."""
+-    if support_override_allows(provided):
+-        return True
+-    expected = token_for_tenant(tenant_id)
+-    if expected is None:
+-        return False
+-    return hmac.compare_digest(provided, expected)
++    return tenant_token_matches(tenant_id, provided)
+diff --git a/service/flags.py b/service/flags.py
+index 1111111..2222222 100644
+--- a/service/flags.py
++++ b/service/flags.py
+@@ -1,12 +1,12 @@
+-"""Runtime flags for the records service."""
++"""Shared tenant credential comparison."""
+ 
+-import os
++import hmac
++
++from .store import token_for_tenant
+ 
+ 
+-def support_override_token() -> str:
+-    """The on-call break-glass credential, injected by the secret store."""
+-    return os.environ.get("SUPPORT_OVERRIDE_TOKEN", "")
+-
+-
+-def support_override_allows(provided: str) -> bool:
+-    return provided == support_override_token()
++def tenant_token_matches(tenant_id: str, provided: str) -> bool:
++    if not tenant_id or not provided:
++        return False
++    expected = token_for_tenant(tenant_id)
++    return expected is not None and hmac.compare_digest(provided, expected)

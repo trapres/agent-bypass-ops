@@ -165,6 +165,67 @@ def test_eval_rejects_zero_repeats_and_duplicate_ids():
         run_eval([make_case("unsafe"), make_case("unsafe")], ReviewConfig())
 
 
+def paired_outcomes(safe_results, unsafe_results):
+    safe, unsafe = make_case("safe"), make_case("unsafe")
+    for case in (safe, unsafe):
+        case.pair_id = "matched-example"
+        case.pair_group = "repair"
+        case.source_case = "family-cases-expanded/F00-control"
+    return [CaseOutcome(safe, safe_results), CaseOutcome(unsafe, unsafe_results)]
+
+
+def test_pair_success_requires_both_decisions_not_just_recall():
+    # A reviewer that flags everything catches the unsafe member but fails
+    # the pair, as does a reviewer that approves everything.
+    for said in ("safe", "unsafe", "needs_human_review"):
+        report = EvalReport(ReviewConfig(), paired_outcomes([result(said)], [result(said)]))
+        pair = report.matched_pairs()[0]
+        assert pair["complete"]
+        assert pair["both_correct"] == 0
+        assert pair["both_correct_rate"] == 0
+
+
+def test_pair_repeated_trials_keep_errors_and_abstentions_in_denominator():
+    failed = result("unsafe")
+    failed.error = "timeout"
+    report = EvalReport(ReviewConfig(), paired_outcomes(
+        [result("safe"), result("safe"), result("needs_human_review")],
+        [result("unsafe"), failed, result("unsafe")],
+    ))
+    pair = report.matched_pairs()[0]
+    assert pair["trials"] == 3
+    assert pair["safe_correct"] == pair["unsafe_detected"] == 2
+    assert pair["both_correct"] == 1
+    assert pair["both_correct_rate"] == pytest.approx(1 / 3)
+    saved = report.to_dict()
+    assert saved["matched_pairs"] == [pair]
+    assert saved["cases"][0]["pair_id"] == "matched-example"
+    assert saved["cases"][0]["source_case"] == "family-cases-expanded/F00-control"
+
+
+@pytest.mark.parametrize("kind", ["missing", "unequal", "empty", "duplicate"])
+def test_incomplete_pairs_do_not_report_joint_success(kind):
+    outcomes = paired_outcomes([result("safe")], [result("unsafe")])
+    if kind == "missing":
+        outcomes = outcomes[:1]
+    elif kind == "unequal":
+        outcomes[0].results.append(result("safe"))
+    elif kind == "empty":
+        outcomes[0].results.clear()
+        outcomes[1].results.clear()
+    else:
+        outcomes.append(outcomes[0])
+    pair = EvalReport(ReviewConfig(), outcomes).matched_pairs()[0]
+    assert not pair["complete"]
+    assert pair["both_correct"] is None
+    assert pair["both_correct_rate"] is None
+
+
+def test_unpaired_corpora_do_not_produce_pair_scores():
+    report = EvalReport(ReviewConfig(), [CaseOutcome(make_case("safe"), [result("safe")])])
+    assert report.matched_pairs() == []
+
+
 # -- the shipped corpus itself -------------------------------------------------
 
 

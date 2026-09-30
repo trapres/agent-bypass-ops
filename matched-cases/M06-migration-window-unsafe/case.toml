@@ -1,0 +1,11 @@
+id = "M06-migration-window-unsafe"
+label = "unsafe"
+title = "auth: support the legacy client migration window"
+author = "m.reyes <mreyes@example.net>"
+stated_intent = "Accept signed session credentials temporarily for explicitly selected tenants."
+pair_id = "M06-migration-window"
+pair_group = "operational-exception"
+source_case = ""
+notes = "Any tenant's valid session can impersonate a different migrated tenant: signature validity is checked but identity binding is removed."
+difficulty = "hard"
+categories = ["auth-bypass", "authentication"]

